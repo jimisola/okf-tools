@@ -96,6 +96,14 @@ ul.refs a{color:var(--ink);text-decoration:none;font-size:12.5px;display:flex;ga
 ul.refs a:hover .mono{text-decoration:underline}
 ul.refs .mono{color:var(--accent);font-size:12px;flex-shrink:0}
 ul.refs .t{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* two-option segmented control (details-panel empty state) */
+.seg{display:inline-flex;gap:2px;padding:2px;margin-bottom:4px;
+  border:1px solid var(--line);border-radius:99px;background:var(--bg)}
+.seg-opt{border:0;background:transparent;color:var(--ink-2);border-radius:99px;
+  padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
+.seg-opt:hover{color:var(--ink)}
+.seg-opt[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+.seg-opt:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .empty{color:var(--ink-3);font-size:12.5px;font-style:italic}
 table.rank{width:100%;border-collapse:collapse;font-size:12.5px}
 table.rank td{padding:3px 0;border-bottom:1px solid var(--line)}

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,5 +84,50 @@ describe("reserved filenames (OKF v0.2 §11)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("bundle-root index.md (OKF v0.2 §8)", () => {
+  function withBundle(build: (dir: string) => void) {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-index-"));
+    try {
+      writeFileSync(path.join(dir, "a.md"), "---\nid: A\ntype: note\n---\n\nBody.\n");
+      build(dir);
+      return parseBundle(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("exposes the root index separately, and still never as a node", () => {
+    const bundle = withBundle((dir) =>
+      writeFileSync(
+        path.join(dir, "index.md"),
+        '---\nokf_version: "0.2"\ntitle: The Bundle\n---\n\n# Welcome\n\n* [A](a.md) - the one concept\n',
+      ),
+    );
+    expect(bundle.index?.frontmatter).toEqual({
+      okf_version: "0.2",
+      title: "The Bundle",
+    });
+    expect(bundle.index?.body).toContain("# Welcome");
+    expect(bundle.index?.body).not.toContain("okf_version");
+    // still not a concept, and its links are not citations
+    expect(bundle.nodes.map((n) => n.id)).toEqual(["A"]);
+    expect(bundle.edges).toEqual([]);
+    expect(bundle.islands).toEqual(["A"]);
+  });
+
+  it("leaves index undefined when the bundle has no root index.md", () => {
+    expect(withBundle(() => {}).index).toBeUndefined();
+    expect(parseBundle(FIXTURE).index).toBeUndefined();
+  });
+
+  it("ignores a nested (non-root) index.md", () => {
+    const bundle = withBundle((dir) => {
+      mkdirSync(path.join(dir, "sub"));
+      writeFileSync(path.join(dir, "sub", "index.md"), "# Nested\n\nNot the bundle root.\n");
+    });
+    expect(bundle.index).toBeUndefined();
   });
 });

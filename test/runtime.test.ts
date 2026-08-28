@@ -262,3 +262,152 @@ describe("multi-select facets", () => {
     expect(doc.activeElement).toBe(btn);
   });
 });
+
+describe("details-panel empty state: Overview vs Most cited", () => {
+  // A bundle with a root index.md. The index links one concept (a real
+  // citation target) and one reserved file (never a concept, so inert).
+  const INDEXED = fileURLToPath(new URL("./fixtures/.indexed-tmp", import.meta.url));
+  rmSync(INDEXED, { recursive: true, force: true });
+  mkdirSync(path.join(INDEXED, "DOC"), { recursive: true });
+  writeFileSync(
+    path.join(INDEXED, "index.md"),
+    '---\nokf_version: "0.2"\n---\n\n# Bundle overview\n\nHow to read this corpus.\n\n* [First doc](DOC/DOC.001.md) - the entry point\n* [Change log](log.md) - not a concept\n',
+  );
+  writeFileSync(path.join(INDEXED, "log.md"), "## 2026-08-28\n\nEntry.\n");
+  writeFileSync(
+    path.join(INDEXED, "DOC", "DOC.001.md"),
+    "---\nid: DOC.001\ntitle: First doc\ntype: policy\n---\n\n# First\n\nBody one.\n",
+  );
+  writeFileSync(
+    path.join(INDEXED, "DOC", "DOC.002.md"),
+    "---\nid: DOC.002\ntitle: Second doc\ntype: policy\n---\n\n# Second\n\nSee [First doc](DOC.001.md).\n",
+  );
+  afterAll(() => rmSync(INDEXED, { recursive: true, force: true }));
+
+  const indexedConfig = resolveConfig({ name: "Indexed Corpus", facets: ["type"] });
+
+  async function loadIndexed(stored?: string) {
+    const { html } = generate(INDEXED, indexedConfig);
+    const page = browser.newPage();
+    if (stored !== undefined)
+      page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", stored);
+    page.content = html;
+    await page.waitUntilComplete();
+    return page;
+  }
+
+  const tabs = (doc: Document) =>
+    [...doc.querySelectorAll("#panel .seg-opt")] as HTMLButtonElement[];
+
+  it("the index is embedded in the page but is not a node", async () => {
+    const page = await loadIndexed();
+    const doc = page.mainFrame.document;
+    expect(doc.querySelectorAll("circle[data-id]")).toHaveLength(2);
+    expect(doc.getElementById("stats")?.textContent).toContain("2 publications");
+    expect(doc.querySelector('circle[data-id="index"]')).toBeFalsy();
+    expect(
+      JSON.parse(doc.getElementById("viewer-data")!.textContent!).index.body,
+    ).toContain("# Bundle overview");
+  });
+
+  it("defaults to Overview, renders the index body as markdown", async () => {
+    const page = await loadIndexed();
+    const doc = page.mainFrame.document;
+    const panel = doc.getElementById("panel") as HTMLElement;
+    expect(tabs(doc).map((b) => b.textContent)).toEqual(["Overview", "Most cited"]);
+    expect(tabs(doc).map((b) => b.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+    ]);
+    expect(panel.querySelector(".seg")?.getAttribute("role")).toBe("tablist");
+    expect(tabs(doc)[0]!.getAttribute("role")).toBe("tab");
+    expect(panel.querySelector(".body-md h1")?.textContent).toBe("Bundle overview");
+    expect(panel.textContent).toContain("How to read this corpus.");
+    expect(panel.textContent).not.toContain("the most cited");
+    expect(panel.querySelector("table.rank")).toBeFalsy();
+  });
+
+  it("relative .md links in the Overview navigate in-pane; non-concepts stay inert", async () => {
+    const page = await loadIndexed();
+    const doc = page.mainFrame.document;
+    const panel = doc.getElementById("panel") as HTMLElement;
+    const links = [...panel.querySelectorAll(".body-md a")] as HTMLAnchorElement[];
+    expect(links.map((a) => a.dataset.go)).toEqual(["DOC.001", undefined]);
+    // cancelable: the handler calls preventDefault, so the frame must not navigate
+    links[0]!.dispatchEvent(
+      new page.mainFrame.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    expect(panel.querySelector(".pid")?.textContent).toBe("DOC.001");
+    expect(panel.textContent).toContain("Cited by (1) — impact if this changes");
+    // going back returns to the active empty-state view — the Overview
+    (panel.querySelector("button.chip") as HTMLButtonElement).click();
+    expect(panel.querySelector(".body-md h1")?.textContent).toBe("Bundle overview");
+  });
+
+  it("switching to Most cited shows the ranking and persists the choice", async () => {
+    const page = await loadIndexed();
+    const doc = page.mainFrame.document;
+    const panel = doc.getElementById("panel") as HTMLElement;
+    tabs(doc)[1]!.click();
+    expect(panel.textContent).toContain("Most cited");
+    const rows = [...panel.querySelectorAll("table.rank tr")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("DOC.001");
+    expect(panel.querySelector(".body-md")).toBeFalsy();
+    expect(tabs(doc).map((b) => b.getAttribute("aria-selected"))).toEqual([
+      "false",
+      "true",
+    ]);
+    expect(doc.activeElement).toBe(tabs(doc)[1]);
+    expect(
+      page.mainFrame.window.localStorage.getItem("okf-viewer-empty-view"),
+    ).toBe("ranking");
+  });
+
+  it("arrow keys move between the two options", async () => {
+    const page = await loadIndexed();
+    const doc = page.mainFrame.document;
+    const panel = doc.getElementById("panel") as HTMLElement;
+    expect(tabs(doc).map((b) => b.tabIndex)).toEqual([0, -1]);
+    panel.querySelector(".seg")!.dispatchEvent(
+      new page.mainFrame.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+    );
+    expect(panel.querySelector("table.rank")).toBeTruthy();
+    expect(tabs(doc).map((b) => b.tabIndex)).toEqual([-1, 0]);
+    panel.querySelector(".seg")!.dispatchEvent(
+      new page.mainFrame.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+    );
+    expect(panel.querySelector(".body-md h1")?.textContent).toBe("Bundle overview");
+  });
+
+  it("honours a stored choice on a later visit", async () => {
+    const page = await loadIndexed("ranking");
+    const panel = page.mainFrame.document.getElementById("panel") as HTMLElement;
+    expect(panel.querySelector("table.rank")).toBeTruthy();
+    expect(panel.querySelector(".body-md")).toBeFalsy();
+    const back = await loadIndexed("overview");
+    expect(
+      (back.mainFrame.document.getElementById("panel") as HTMLElement).querySelector(
+        ".body-md h1",
+      )?.textContent,
+    ).toBe("Bundle overview");
+  });
+
+  it("a bundle with no index has no toggle and shows the ranking, stored choice or not", async () => {
+    for (const stored of [undefined, "overview"]) {
+      const { html } = generate(FIXTURE, config);
+      const page = browser.newPage();
+      if (stored) page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", stored);
+      page.content = html;
+      await page.waitUntilComplete();
+      const doc = page.mainFrame.document;
+      const panel = doc.getElementById("panel") as HTMLElement;
+      expect(panel.querySelector(".seg")).toBeFalsy();
+      expect(panel.textContent).toContain("Most cited");
+      expect(panel.querySelector("table.rank")).toBeTruthy();
+      expect(
+        JSON.parse(doc.getElementById("viewer-data")!.textContent!).index,
+      ).toBeUndefined();
+    }
+  });
+});

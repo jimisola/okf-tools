@@ -166,6 +166,13 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
   inside a body navigate in-pane. Frontmatter values that are absolute
   `http(s)` URLs — at any nesting depth — render as clickable links; every
   other scheme (`javascript:`, `data:`, `mailto:`) stays inert text.
+- Empty detail pane (nothing selected): a two-option toggle between
+  **Overview** — the bundle-root `index.md` rendered as markdown, with its
+  relative `.md` links navigating in-pane like any body link — and
+  **Most cited**, the ranking by citations received. Overview is the default
+  when the bundle has a root `index.md`; the choice is persisted in
+  `localStorage`. Bundles without one show the ranking and no toggle. The
+  index is never a node, so it never distorts the citation metrics.
 - Theme: follows `prefers-color-scheme`, with a manual system/light/dark
   toggle persisted in `localStorage`.
 

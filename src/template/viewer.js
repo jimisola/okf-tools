@@ -11,6 +11,9 @@ const nodes = DATA.nodes;
 const byId = new Map(nodes.map((n) => [n.id, n]));
 const byFile = new Map(nodes.map((n) => [n.file, n]));
 const edges = DATA.edges.filter(([s, t]) => byId.has(s) && byId.has(t));
+// The bundle-root index.md, if the bundle has one. Not a node: it is the
+// bundle's front page, shown as the "Overview" of the empty details panel.
+const INDEX = DATA.index || null;
 
 const str = (v) => (typeof v === "string" ? v : "");
 const titleOf = (n) => str(n.frontmatter[CONFIG.titleField]) || n.id;
@@ -435,33 +438,124 @@ function resolveBodyLink(fromFile, href) {
   return byFile.get(parts.join("/")) || null;
 }
 
+/**
+ * A markdown body rendered to HTML, with its relative `.md` links rewired to
+ * in-pane navigation. `fromFile` is the bundle-relative path the links are
+ * resolved against — used for concept bodies and for the bundle index alike.
+ */
+function renderMarkdownBody(fromFile, markdown) {
+  const body = el("div", "body-md");
+  // Trusted input: the bundle is your own corpus (see README).
+  body.innerHTML = marked.parse(markdown);
+  for (const a of body.querySelectorAll("a[href]")) {
+    const target = resolveBodyLink(fromFile, a.getAttribute("href"));
+    if (target) a.dataset.go = target.id;
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(a.getAttribute("href"))) {
+      a.target = "_blank";
+      a.rel = "noopener";
+    }
+  }
+  return body;
+}
+
+// ---- empty state: the index Overview, or the Most-cited ranking ----
+const EMPTY_VIEWS = ["overview", "ranking"];
+const EMPTY_VIEW_KEY = "okf-viewer-empty-view";
+const EMPTY_VIEW_LABELS = { overview: "Overview", ranking: "Most cited" };
+
+// Overview by default when there is an index to show. A stored "overview"
+// choice falls back to the ranking in a bundle that has no index.
+let emptyView = INDEX ? "overview" : "ranking";
+try {
+  const savedView = localStorage.getItem(EMPTY_VIEW_KEY);
+  if (EMPTY_VIEWS.includes(savedView)) emptyView = savedView;
+} catch {
+  /* storage unavailable */
+}
+if (!INDEX) emptyView = "ranking";
+
+function setEmptyView(view) {
+  emptyView = view;
+  try {
+    localStorage.setItem(EMPTY_VIEW_KEY, view);
+  } catch {
+    /* storage unavailable */
+  }
+  renderPanel();
+  panel.scrollTop = 0;
+  const btn = panel.querySelector('[data-empty-view="' + view + '"]');
+  if (btn) btn.focus();
+}
+
+/** The two-option segmented control — null when the bundle has no index. */
+function emptyViewToggle() {
+  if (!INDEX) return null;
+  const tabs = el("div", "seg");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Details panel view");
+  for (const view of EMPTY_VIEWS) {
+    const b = el("button", "seg-opt", EMPTY_VIEW_LABELS[view]);
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.dataset.emptyView = view;
+    const current = view === emptyView;
+    b.setAttribute("aria-selected", String(current));
+    // roving tabindex: only the selected option is in the tab order
+    b.tabIndex = current ? 0 : -1;
+    b.addEventListener("click", () => {
+      if (view !== emptyView) setEmptyView(view);
+    });
+    tabs.append(b);
+  }
+  tabs.addEventListener("keydown", (e) => {
+    const dir = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    const i = EMPTY_VIEWS.indexOf(emptyView);
+    setEmptyView(EMPTY_VIEWS[(i + dir + EMPTY_VIEWS.length) % EMPTY_VIEWS.length]);
+  });
+  return tabs;
+}
+
+function renderOverview() {
+  panel.append(el("h2", null, "Overview"));
+  panel.append(renderMarkdownBody("index.md", INDEX.body));
+}
+
+function renderRanking() {
+  panel.append(el("h2", null, "Most cited"));
+  const ranked = nodes
+    .filter((n) => n.in > 0)
+    .sort((a, b) => b.in - a.in || (a.id < b.id ? -1 : 1));
+  const table = el("table", "rank");
+  for (const n of ranked) {
+    const tr = el("tr");
+    const td1 = el("td");
+    const a = el("a");
+    a.href = "#";
+    a.dataset.go = n.id;
+    a.append(el("span", "mono", n.id));
+    td1.append(a);
+    tr.append(td1, el("td", null, titleOf(n)), el("td", null, String(n.in)));
+    table.append(tr);
+  }
+  panel.append(table);
+  const hint = el(
+    "p",
+    "empty",
+    "Click a node for impact analysis — what it cites, and what would be affected if it changed.",
+  );
+  hint.style.marginTop = "14px";
+  panel.append(hint);
+}
+
 function renderPanel() {
   panel.textContent = "";
   if (!selected) {
-    panel.append(el("h2", null, "Most cited"));
-    const ranked = nodes
-      .filter((n) => n.in > 0)
-      .sort((a, b) => b.in - a.in || (a.id < b.id ? -1 : 1));
-    const table = el("table", "rank");
-    for (const n of ranked) {
-      const tr = el("tr");
-      const td1 = el("td");
-      const a = el("a");
-      a.href = "#";
-      a.dataset.go = n.id;
-      a.append(el("span", "mono", n.id));
-      td1.append(a);
-      tr.append(td1, el("td", null, titleOf(n)), el("td", null, String(n.in)));
-      table.append(tr);
-    }
-    panel.append(table);
-    const hint = el(
-      "p",
-      "empty",
-      "Click a node for impact analysis — what it cites, and what would be affected if it changed.",
-    );
-    hint.style.marginTop = "14px";
-    panel.append(hint);
+    const tabs = emptyViewToggle();
+    if (tabs) panel.append(tabs);
+    if (emptyView === "overview" && INDEX) renderOverview();
+    else renderRanking();
     return;
   }
 
@@ -483,18 +577,7 @@ function renderPanel() {
   panel.append(meta);
 
   if (n.body.trim()) {
-    const body = el("div", "body-md");
-    // Trusted input: the bundle is your own corpus (see README).
-    body.innerHTML = marked.parse(n.body);
-    for (const a of body.querySelectorAll("a[href]")) {
-      const target = resolveBodyLink(n.file, a.getAttribute("href"));
-      if (target) a.dataset.go = target.id;
-      else if (/^[a-z][a-z0-9+.-]*:/i.test(a.getAttribute("href"))) {
-        a.target = "_blank";
-        a.rel = "noopener";
-      }
-    }
-    panel.append(el("h2", null, "Document"), body);
+    panel.append(el("h2", null, "Document"), renderMarkdownBody(n.file, n.body));
   }
 
   const cites = [...new Set(edges.filter(([s]) => s === selected).map(([, t]) => t))];
@@ -505,7 +588,7 @@ function renderPanel() {
     refList(citedBy),
   );
 
-  const back = el("button", "chip", "← back to ranking");
+  const back = el("button", "chip", "← back to " + EMPTY_VIEW_LABELS[emptyView].toLowerCase());
   back.dataset.go = "";
   panel.append(back);
 }

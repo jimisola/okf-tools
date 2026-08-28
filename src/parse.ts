@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -15,12 +15,24 @@ export interface BundleNode {
   out: number;
 }
 
+/**
+ * The bundle-root `index.md` (OKF v0.2 §8). It is not a concept — it never
+ * becomes a node — but it is the bundle's own front page, so it is exposed
+ * separately for a reader to browse.
+ */
+export interface BundleIndex {
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
 export interface Bundle {
   nodes: BundleNode[];
   /** [sourceId, targetId] pairs, deduplicated, self-links excluded. */
   edges: [string, string][];
   /** Ids of nodes with no edges in either direction. */
   islands: string[];
+  /** The bundle-root `index.md`, if the bundle has one. Nested ones are ignored. */
+  index?: BundleIndex;
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -164,5 +176,17 @@ export function parseBundle(bundleDir: string, idField = "id"): Bundle {
     .filter((n) => n.in === 0 && n.out === 0)
     .map((n) => n.id);
 
-  return { nodes, edges, islands };
+  const index = readBundleIndex(root);
+  return index ? { nodes, edges, islands, index } : { nodes, edges, islands };
+}
+
+/**
+ * The bundle-root `index.md`, if present. Only this one is exposed: §8 lets
+ * nested directories carry their own `index.md`, but only the bundle root's
+ * may declare `okf_version`, and only it describes the bundle as a whole.
+ */
+function readBundleIndex(root: string): BundleIndex | undefined {
+  const abs = path.join(root, "index.md");
+  if (!existsSync(abs) || !statSync(abs).isFile()) return undefined;
+  return splitFrontmatter(readFileSync(abs, "utf8"));
 }

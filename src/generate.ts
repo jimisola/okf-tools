@@ -49,6 +49,9 @@ export function generateHtml(bundle: Bundle, config: ViewerConfig): string {
       search: searchText(n, config),
     })),
     edges: bundle.edges,
+    // The bundle-root index.md, rendered as the panel's "Overview". Absent
+    // when the bundle has none, and never a node either way.
+    ...(bundle.index ? { index: bundle.index } : {}),
   };
 
   const html = readFileSync(path.join(TEMPLATE_DIR, "viewer.html"), "utf8");
