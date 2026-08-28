@@ -5,6 +5,7 @@ import {
   Browser,
   type Document,
   type Element,
+  type HTMLAnchorElement,
   type HTMLButtonElement,
   type HTMLElement,
   type HTMLInputElement,
@@ -81,6 +82,70 @@ describe("generated page runtime", () => {
     // relative .md links in the body got in-pane navigation targets
     const bodyLink = panel?.querySelector('.body-md a[data-go="REF.001"]');
     expect(bodyLink).toBeTruthy();
+  });
+});
+
+describe("frontmatter URL values", () => {
+  async function metaOf() {
+    const page = await loadPage();
+    const doc = page.mainFrame.document;
+    const node = doc.querySelector('circle[data-id="DOC.001"]');
+    node?.dispatchEvent(
+      new page.mainFrame.window.MouseEvent("click", { bubbles: true }),
+    );
+    return doc.querySelector("#panel .meta") as HTMLElement;
+  }
+
+  it("renders http(s) values inside objects and object arrays as safe links", async () => {
+    const meta = await metaOf();
+    const links = [...meta.querySelectorAll("a.ext")] as HTMLAnchorElement[];
+    const hrefs = links.map((a) => a.getAttribute("href"));
+    // source.url (nested object) and sources[].resource (array of objects)
+    expect(hrefs).toContain(
+      "https://example.com/wiki/spaces/ARCH/pages/123456789/A-very-long-page-title-that-should-be-shortened",
+    );
+    expect(hrefs).toContain("https://example.com/spec/alpha");
+    // a top-level scalar URL
+    expect(hrefs).toContain("https://example.com/home");
+    for (const a of links) {
+      expect(a.getAttribute("target")).toBe("_blank");
+      expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+      expect(a.getAttribute("title")).toBe(a.getAttribute("href"));
+    }
+  });
+
+  it("shortens long link text but keeps the full URL in title", async () => {
+    const meta = await metaOf();
+    const long = [...meta.querySelectorAll("a.ext")].find((a) =>
+      a.getAttribute("href")?.includes("A-very-long-page-title"),
+    ) as HTMLAnchorElement;
+    expect(long.textContent).toContain("…");
+    expect(long.textContent!.length).toBeLessThan(
+      long.getAttribute("title")!.length,
+    );
+    expect(long.textContent).toContain("example.com");
+  });
+
+  it("never links a javascript: value — it stays inert text", async () => {
+    const meta = await metaOf();
+    expect(meta.textContent).toContain("javascript:alert(1)");
+    // allow-list, not deny-list: every anchor the panel produced is http(s),
+    // so no javascript:/data:/vbscript: value can have slipped through
+    for (const a of meta.querySelectorAll("a")) {
+      expect(a.getAttribute("href")).toMatch(/^https?:\/\//);
+    }
+    expect(meta.querySelector('a[href^="javascript:"]')).toBeFalsy();
+  });
+
+  it("leaves non-URL strings as plain text", async () => {
+    const meta = await metaOf();
+    // a URL embedded in prose is not a link target
+    expect(meta.textContent).toContain("see https://example.com later");
+    const hrefs = [...meta.querySelectorAll("a.ext")].map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(hrefs).not.toContain("https://example.com");
+    expect(hrefs).not.toContain("designing APIs");
   });
 });
 

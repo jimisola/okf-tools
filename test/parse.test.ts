@@ -54,7 +54,11 @@ describe("parseBundle", () => {
     const n = byId.get("DOC.001");
     expect(n?.frontmatter["tags"]).toEqual(["rest", "naming"]);
     expect(n?.frontmatter["count"]).toBe(42);
-    expect(n?.frontmatter["source"]).toEqual({ system: "wiki", ref: "123" });
+    expect(n?.frontmatter["source"]).toEqual({
+      system: "wiki",
+      url: "https://example.com/wiki/spaces/ARCH/pages/123456789/A-very-long-page-title-that-should-be-shortened",
+      ref: "123",
+    });
     expect(n?.body).toContain("# Alpha");
     expect(n?.body).not.toContain("---\nid:");
   });

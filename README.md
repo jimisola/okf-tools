@@ -163,7 +163,9 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
 - Node size = citations received; drafts render as hollow rings.
 - Detail pane: full frontmatter, the rendered markdown body, and
   "Cites" / "Cited by — impact if this changes" lists. Relative `.md` links
-  inside a body navigate in-pane.
+  inside a body navigate in-pane. Frontmatter values that are absolute
+  `http(s)` URLs — at any nesting depth — render as clickable links; every
+  other scheme (`javascript:`, `data:`, `mailto:`) stays inert text.
 - Theme: follows `prefers-color-scheme`, with a manual system/light/dark
   toggle persisted in `localStorage`.
 

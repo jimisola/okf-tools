@@ -335,6 +335,50 @@ function refList(ids) {
   return ul;
 }
 
+// Only absolute http(s) URLs ever become links. Everything else — javascript:,
+// data:, mailto:, relative paths, arbitrary strings — stays inert text.
+const HTTP_URL = /^https?:\/\/[^\s<>"]+$/i;
+const isHttpUrl = (v) => typeof v === "string" && HTTP_URL.test(v.trim());
+
+// Link text: the URL without its scheme, elided in the middle when long. The
+// full URL stays in `title` (and in href).
+function shortUrl(u, max = 46) {
+  const bare = u.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  if (bare.length <= max) return bare;
+  const slash = bare.indexOf("/");
+  const host = slash === -1 ? bare : bare.slice(0, slash);
+  const rest = slash === -1 ? "" : bare.slice(slash);
+  const keep = Math.max(10, max - host.length - 2);
+  return host + "/…" + rest.slice(-keep);
+}
+
+function urlLink(value) {
+  const url = value.trim();
+  const a = el("a", "ext", shortUrl(url));
+  a.href = url;
+  a.title = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+// A frontmatter scalar as a DOM node: an anchor for http(s) URLs, plain text
+// otherwise. Built with createElement/textContent — never innerHTML.
+function scalarNode(value) {
+  if (isHttpUrl(value)) return urlLink(value);
+  return document.createTextNode(
+    typeof value === "object" && value !== null ? JSON.stringify(value) : String(value),
+  );
+}
+
+function objectEntries(target, obj) {
+  for (const [k, x] of Object.entries(obj)) {
+    const sub = el("span", "sub");
+    sub.append(el("span", "sk", k + ": "), scalarNode(x));
+    target.append(sub);
+  }
+}
+
 function metaValue(value) {
   const v = el("span", "v");
   if (value == null) {
@@ -344,26 +388,29 @@ function metaValue(value) {
       v.append(el("span", "empty", "[]"));
     } else if (value.every((x) => typeof x === "string")) {
       const chips = el("span", "chips");
-      for (const x of value) chips.append(el("span", null, x));
+      for (const x of value) {
+        const chip = el("span");
+        chip.append(scalarNode(x));
+        chips.append(chip);
+      }
       v.append(chips);
     } else {
       for (const x of value) {
-        v.append(
-          el("span", "sub", typeof x === "object" ? JSON.stringify(x) : String(x)),
-        );
+        if (x !== null && typeof x === "object" && !Array.isArray(x)) {
+          const item = el("span", "item");
+          objectEntries(item, x);
+          v.append(item);
+        } else {
+          const item = el("span", "sub");
+          item.append(scalarNode(x));
+          v.append(item);
+        }
       }
     }
   } else if (typeof value === "object") {
-    for (const [k, x] of Object.entries(value)) {
-      const sub = el("span", "sub");
-      sub.append(
-        el("span", "sk", k + ": "),
-        document.createTextNode(
-          typeof x === "object" && x !== null ? JSON.stringify(x) : String(x),
-        ),
-      );
-      v.append(sub);
-    }
+    objectEntries(v, value);
+  } else if (isHttpUrl(value)) {
+    v.append(urlLink(value));
   } else {
     v.textContent = String(value);
   }

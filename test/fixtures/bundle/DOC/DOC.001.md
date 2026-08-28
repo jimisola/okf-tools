@@ -11,7 +11,15 @@ appliesWhen: "designing APIs"
 count: 42
 source:
   system: wiki
+  url: "https://example.com/wiki/spaces/ARCH/pages/123456789/A-very-long-page-title-that-should-be-shortened"
   ref: "123"
+sources:
+  - resource: "https://example.com/spec/alpha"
+    id: "spec-alpha"
+  - resource: "javascript:alert(1)"
+    id: "not-a-link"
+homepage: "https://example.com/home"
+notes: "see https://example.com later"
 ---
 
 # Alpha
