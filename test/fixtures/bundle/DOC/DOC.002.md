@@ -1,7 +1,7 @@
 ---
 id: DOC.002
-title: "Beta standard"
-type: standard
+title: "Beta policy"
+type: policy
 domain: api
 lifecycle: draft
 ---

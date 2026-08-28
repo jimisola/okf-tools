@@ -19,7 +19,7 @@ const FIXTURE = fileURLToPath(new URL("./fixtures/bundle", import.meta.url));
 const config = resolveConfig({
   name: "Fixture Corpus",
   facets: ["type", "domain"],
-  typeLabels: { standard: "must" },
+  typeLabels: { policy: "must", guideline: "should" },
   draft: { field: "lifecycle", value: "draft" },
   backLink: "../",
 });
@@ -54,13 +54,13 @@ describe("generated page runtime", () => {
     expect(doc.getElementById("stats")?.textContent).toContain("3 citations");
     expect(doc.getElementById("stats")?.textContent).toContain("1 islands");
     expect(doc.getElementById("stats")?.textContent).toContain("1 drafts");
-    expect(doc.getElementById("legend")?.textContent).toContain("standard (must)");
+    expect(doc.getElementById("legend")?.textContent).toContain("policy (must)");
     expect(doc.querySelectorAll("circle[data-id]")).toHaveLength(4);
     // facet chips discovered from the bundle
     const chips = [...doc.querySelectorAll(".controls .chip")].map(
       (c) => c.textContent,
     );
-    expect(chips).toContain("advisory");
+    expect(chips).toContain("guideline");
     expect(chips).toContain("platform");
     // most-cited ranking shown when nothing is selected
     expect(doc.getElementById("panel")?.textContent).toContain("Most cited");
@@ -72,7 +72,7 @@ describe("generated page runtime", () => {
     const node = doc.querySelector('circle[data-id="DOC.001"]');
     node?.dispatchEvent(new page.mainFrame.window.MouseEvent("click", { bubbles: true }));
     const panel = doc.getElementById("panel");
-    expect(panel?.textContent).toContain("Alpha standard");
+    expect(panel?.textContent).toContain("Alpha policy");
     expect(panel?.textContent).toContain("appliesWhen");
     expect(panel?.textContent).toContain("Cites (2)");
     expect(panel?.textContent).toContain("Cited by (0) — impact if this changes");
@@ -87,14 +87,14 @@ describe("generated page runtime", () => {
 describe("multi-select facets", () => {
   // A generated bundle where `domain` has 10 values (> the 8-chip cutoff):
   // doc0..doc9, domain d0..d9 (one publication each), type alternating
-  // standard (even) / advisory (odd).
+  // policy (even) / guideline (odd).
   const MANY = fileURLToPath(new URL("./fixtures/.many-domains-tmp", import.meta.url));
   rmSync(MANY, { recursive: true, force: true });
   mkdirSync(MANY, { recursive: true });
   for (let i = 0; i < 10; i++) {
     writeFileSync(
       path.join(MANY, `doc${i}.md`),
-      `---\nid: DOC.${i}\ntitle: Doc ${i}\ntype: ${i % 2 === 0 ? "standard" : "advisory"}\ndomain: d${i}\n---\nBody ${i}.\n`,
+      `---\nid: DOC.${i}\ntitle: Doc ${i}\ntype: ${i % 2 === 0 ? "policy" : "guideline"}\ndomain: d${i}\n---\nBody ${i}.\n`,
     );
   }
   afterAll(() => rmSync(MANY, { recursive: true, force: true }));
@@ -124,7 +124,7 @@ describe("multi-select facets", () => {
     expect(btn?.textContent).toBe("domain: all");
     expect(btn?.getAttribute("aria-haspopup")).toBe("true");
     // type has 2 values: still a chip row
-    expect(doc.querySelector('.controls .chip[data-facet="type"][data-value="standard"]')).toBeTruthy();
+    expect(doc.querySelector('.controls .chip[data-facet="type"][data-value="policy"]')).toBeTruthy();
     expect(doc.querySelector('.controls [data-facet="domain"]')).toBeFalsy();
   });
 
@@ -149,16 +149,16 @@ describe("multi-select facets", () => {
     expect(btn.textContent).toBe("domain: 2 selected");
     expect(circles(doc)).toHaveLength(2);
 
-    // AND across facets: (d1 ∪ d2) ∩ standard = doc2 only
-    const standardChip = doc.querySelector(
-      '.controls .chip[data-facet="type"][data-value="standard"]',
+    // AND across facets: (d1 ∪ d2) ∩ policy = doc2 only
+    const policyChip = doc.querySelector(
+      '.controls .chip[data-facet="type"][data-value="policy"]',
     ) as HTMLButtonElement;
-    standardChip.click();
-    expect(standardChip.getAttribute("aria-pressed")).toBe("true");
+    policyChip.click();
+    expect(policyChip.getAttribute("aria-pressed")).toBe("true");
     expect(circles(doc)).toHaveLength(1);
     expect(doc.querySelector('circle[data-id="DOC.2"]')).toBeTruthy();
 
-    // clear the dropdown facet: back to all 5 standard docs
+    // clear the dropdown facet: back to all 5 policy docs
     (pop.querySelector(".dd-clear") as HTMLButtonElement).click();
     expect(btn.textContent).toBe("domain: all");
     expect(circles(doc)).toHaveLength(5);
@@ -172,10 +172,10 @@ describe("multi-select facets", () => {
   it("legend clicks toggle the same type selection as the chips", async () => {
     const page = await loadMany();
     const doc = page.mainFrame.document;
-    const legendBtn = doc.querySelector('[data-legend-type="advisory"]') as HTMLButtonElement;
+    const legendBtn = doc.querySelector('[data-legend-type="guideline"]') as HTMLButtonElement;
     legendBtn.click();
     expect(circles(doc)).toHaveLength(5);
-    const chip = doc.querySelector('.controls .chip[data-facet="type"][data-value="advisory"]');
+    const chip = doc.querySelector('.controls .chip[data-facet="type"][data-value="guideline"]');
     expect(chip?.getAttribute("aria-pressed")).toBe("true");
     legendBtn.click(); // toggle off
     expect(circles(doc)).toHaveLength(10);

@@ -1,5 +1,5 @@
 {
-  "name": "okf-graph-viewer",
+  "name": "okf-viewer",
   "version": "0.1.0",
   "description": "Generic static-site citation-graph viewer for OKF bundles (markdown + YAML frontmatter). Generates one self-contained HTML file.",
   "license": "Apache-2.0",

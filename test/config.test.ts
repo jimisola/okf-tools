@@ -22,13 +22,13 @@ describe("resolveConfig", () => {
       facets: ["type", "domain", 7],
       draft: { field: "lifecycle", value: "draft" },
       backLink: "../",
-      palette: { standard: "#3b82f6" },
+      palette: { policy: "#3b82f6" },
     });
     expect(c.name).toBe("My Corpus");
     expect(c.facets).toEqual([{ key: "type" }, { key: "domain" }]);
     expect(c.draft).toEqual({ field: "lifecycle", value: "draft" });
     expect(c.backLink).toBe("../");
-    expect(c.palette).toEqual({ standard: "#3b82f6" });
+    expect(c.palette).toEqual({ policy: "#3b82f6" });
     expect(c.idField).toBe("id"); // untouched default
   });
 
@@ -67,7 +67,7 @@ describe("resolveConfig", () => {
 describe("searchText", () => {
   const fm = {
     id: "X.1",
-    title: "Alpha Standard",
+    title: "Alpha Policy",
     description: "How to name things",
     tags: ["rest", "Naming"],
     appliesWhen: "designing APIs",
@@ -78,7 +78,7 @@ describe("searchText", () => {
   it("default (empty searchFields): id, title, plus every string or string-array value", () => {
     const text = searchText(node(fm), DEFAULT_CONFIG);
     expect(text).toContain("x.1");
-    expect(text).toContain("alpha standard");
+    expect(text).toContain("alpha policy");
     expect(text).toContain("how to name things");
     expect(text).toContain("naming"); // array member, lowercased
     expect(text).toContain("designing apis");
@@ -91,6 +91,6 @@ describe("searchText", () => {
     const text = searchText(node(fm), config);
     expect(text).toContain("rest");
     expect(text).toContain("x.1");
-    expect(text).not.toContain("alpha standard");
+    expect(text).not.toContain("alpha policy");
   });
 });

@@ -1,7 +1,7 @@
 ---
 id: REF.001
-title: "Gamma advisory"
-type: advisory
+title: "Gamma guideline"
+type: guideline
 domain: platform
 lifecycle: effective
 ---

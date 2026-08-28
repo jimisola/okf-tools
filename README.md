@@ -1,4 +1,4 @@
-# okf-graph-viewer
+# okf-viewer
 
 A generic static-site graph viewer for [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
 bundles — directories of markdown files with YAML frontmatter. It walks a
@@ -57,8 +57,8 @@ Every key is optional — `{}` (or no `--config` at all) works on any bundle.
       "label": "Domain"               // displayed group name (default: the key)
     }
   ],
-  "typeLabels": {"standard": "must"}, // legend annotations: "standard (must)"
-  "palette": {"standard": "#3b82f6"}, // per-type colors; unknown types get a
+  "typeLabels": {"policy": "must", "guideline": "should"}, // legend: "policy (must)"
+  "palette": {"policy": "#3b82f6"}, // per-type colors; unknown types get a
                                       // stable hash-derived HSL color
   "draft": {"field": "lifecycle", "value": "draft"},
                                       // what counts as a draft: hollow node,

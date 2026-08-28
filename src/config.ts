@@ -38,7 +38,7 @@ export interface ViewerConfig {
    * FacetConfig. Selected values OR within a facet, AND across facets.
    */
   facets: FacetConfig[];
-  /** Optional legend annotations, rendered as `standard (must)`. */
+  /** Optional legend annotations, rendered as `policy (must)`. */
   typeLabels: Record<string, string>;
   /** Optional per-type color overrides; unknown types get a stable hash-derived HSL color. */
   palette: Record<string, string>;

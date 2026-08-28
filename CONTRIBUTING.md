@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving okf-graph-viewer.
+Thanks for your interest in improving okf-viewer.
 
 ## Getting started
 

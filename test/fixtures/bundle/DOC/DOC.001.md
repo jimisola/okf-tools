@@ -1,7 +1,7 @@
 ---
 id: DOC.001
-title: "Alpha standard"
-type: standard
+title: "Alpha policy"
+type: policy
 domain: api
 tags:
   - rest

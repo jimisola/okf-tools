@@ -15,7 +15,7 @@ describe("generate", () => {
 
   it("embeds the bundle data and the config as JSON", () => {
     expect(html).toContain('"DOC.001"');
-    expect(html).toContain('"Alpha standard"');
+    expect(html).toContain('"Alpha policy"');
     expect(html).toContain("Gamma body."); // markdown bodies travel too
     expect(html).toContain('"Fixture Corpus"');
     expect(html).toContain('"draft":{"field":"lifecycle","value":"draft"}');
