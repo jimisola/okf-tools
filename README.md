@@ -1,28 +1,97 @@
-# okf-viewer
+# okf-tools
 
-A generic static-site graph viewer for [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
-bundles — directories of markdown files with YAML frontmatter. It walks a
-bundle, extracts the citation graph from the relative `.md` links between
-document bodies, and generates **one self-contained HTML file**: deterministic
-force layout, filter chips, search, per-document impact analysis, and an
-in-pane document reader. The page loads nothing from any CDN or network.
+A validator and a viewer for [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+bundles — directories of markdown files with YAML frontmatter.
 
-Point it at any directory of frontmatter-bearing markdown — a documentation
+| Tool | What it does | Entry point |
+| --- | --- | --- |
+| **Validator** | Checks a bundle against the OKF v0.2 §11 conformance rules and reports everything else as advice. Text or JSON. | `src/validate-cli.ts` (library: `src/validate.ts`) |
+| **Viewer** | Extracts the citation graph and generates **one self-contained HTML file** — force layout, filter chips, search, impact analysis, in-pane reader. | `src/cli.ts` (library: `src/generate.ts`) |
+
+Point either at any directory of frontmatter-bearing markdown — a documentation
 set, an architecture-decision log, a research bibliography, a policy
-collection — and you get a single portable file you can open locally, attach
-to an email, or drop on any static host.
+collection.
 
 ## Install
 
 ```sh
-git clone https://github.com/jimisola/okf-viewer.git
-cd okf-viewer
+git clone https://github.com/jimisola/okf-tools.git
+cd okf-tools
 npm install
 ```
 
 Node 24 or newer is required.
 
-## Usage
+## Validator
+
+```sh
+npx tsx src/validate-cli.ts <bundleDir> [--json] [--strict]
+```
+
+```
+bundle: ./my-bundle
+12 concepts, 3 index files, 1 log files
+
+errors (1):
+  DOC/beta.md [§11.1 frontmatter.missing] no YAML frontmatter block
+
+warnings (2):
+  DOC/alpha.md [§6 concept.stale] stale: `stale_after` (2020-01-01T00:00:00.000Z) is in the past
+  DOC/alpha.md [§11 link.broken] link target does not resolve inside the bundle: gone.md
+
+NOT CONFORMANT with OKF v0.2 (1 error, 2 warnings)
+```
+
+Exit code is `0` when the bundle is conformant, `1` when it is not, `2` on a
+bad invocation. `--strict` makes warnings fail too. `--json` prints the
+machine-readable report instead:
+
+```jsonc
+{
+  "bundle": "./my-bundle",
+  "conformant": false,
+  "counts": {"concepts": 12, "indexes": 3, "logs": 1},
+  "errors":   [{"file": "DOC/beta.md", "section": "§11.1",
+                "code": "frontmatter.missing", "message": "…"}],
+  "warnings": [{"file": "DOC/alpha.md", "section": "§6",
+                "code": "concept.stale", "message": "…", "line": 4}]
+}
+```
+
+### Errors versus warnings
+
+The separation is the whole point, and it comes straight from the spec.
+**Errors are only the three numbered §11 conformance rules:**
+
+1. every non-reserved `.md` file has a parseable YAML frontmatter block;
+2. every frontmatter block has a non-empty `type`;
+3. the reserved filenames follow their structure when present — an `index.md`
+   carries no frontmatter (the bundle-root one may carry `okf_version`, and
+   nothing else), and a `log.md` uses ISO 8601 `YYYY-MM-DD` date headings.
+
+**Everything else is a warning**, because §11 says consumers MUST NOT reject a
+bundle for missing optional fields, unknown `type` values, unknown extra
+frontmatter keys, broken cross-links or missing `index.md` files. A bundle with
+warnings and no errors is `"conformant": true`. Warnings cover absent
+recommended fields, unknown `status` values, unparseable or elapsed
+`stale_after`, malformed `generated` / `verified` / `sources` entries,
+out-of-order log entries, index entries that are not
+`* [Title](url) - description`, broken links, and a missing root `index.md`.
+
+A bare `verified:` mapping is treated as a one-element list (§5.2), and an
+attestation that predates `generated.at` is surfaced rather than dropped
+(§10.5).
+
+Using it as a library:
+
+```ts
+import { validateBundle, formatReport } from "./src/validate.js";
+
+const report = validateBundle("./my-bundle");
+if (!report.conformant) console.error(formatReport(report));
+```
+
+## Viewer
 
 ```sh
 npx tsx src/cli.ts <bundleDir> <outFile> [--config viewer.config.json]
@@ -34,10 +103,13 @@ Example:
 npx tsx src/cli.ts ./my-bundle out/graph.html --config viewer.config.json
 ```
 
-Open `out/graph.html` in a browser. There is no server and no build step
-beyond that one command.
+It walks the bundle, extracts the citation graph from the relative `.md` links
+between document bodies, and writes a single portable file you can open
+locally, attach to an email, or drop on any static host. The page loads nothing
+from any CDN or network. Open `out/graph.html` in a browser; there is no server
+and no build step beyond that one command.
 
-## Configuration
+### Viewer configuration
 
 Every key is optional — `{}` (or no `--config` at all) works on any bundle.
 
@@ -74,7 +146,7 @@ Frontmatter is rendered **generically**: whatever keys a document has appear
 in the detail pane — strings as text, string arrays as chips, objects as
 compact `key: value` lines. Nothing about the schema is hardcoded.
 
-## What the generated page does
+### What the generated page does
 
 - Stats bar: documents, citations, islands (no edges either way), drafts.
 - Legend: one entry per discovered type; clicking filters by that type.
@@ -95,11 +167,11 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
 - Theme: follows `prefers-color-scheme`, with a manual system/light/dark
   toggle persisted in `localStorage`.
 
-## Screenshots
+### Screenshots
 
 _Coming soon._
 
-## Security note — trusted input
+### Security note — trusted input
 
 The markdown **bodies** in the bundle are rendered as HTML (via
 [marked](https://github.com/markedjs/marked), inlined into the page at build
@@ -113,8 +185,11 @@ Do not point the generator at markdown you would not serve as HTML yourself.
 ```sh
 npm test              # vitest
 npm run typecheck     # tsc --noEmit
+npm run validate -- ./my-bundle
+npm run viewer -- ./my-bundle out/graph.html
 ```
 
+Both tools share `src/parse.ts` — the bundle walk and the frontmatter split.
 The test suite runs against the fixture bundle in `test/fixtures/bundle`. To
 additionally smoke-test the parser against a bundle of your own, set
 `OKF_BUNDLE_DIR` to its path before running the tests.

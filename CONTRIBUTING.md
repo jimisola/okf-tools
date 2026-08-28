@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving okf-viewer.
+Thanks for your interest in improving okf-tools.
 
 ## Getting started
 
@@ -13,7 +13,8 @@ npm run typecheck     # tsc --noEmit, must be clean
 Both must pass before a pull request is ready. To smoke-test a real bundle:
 
 ```sh
-npx tsx src/cli.ts ./my-bundle out/graph.html
+npx tsx src/validate-cli.ts ./my-bundle          # validator
+npx tsx src/cli.ts ./my-bundle out/graph.html    # viewer
 ```
 
 ## Code style
@@ -29,6 +30,15 @@ the commit message or the pull request, not in the source.
 
 Dependency versions are pinned exactly on purpose. Do not widen them to
 ranges.
+
+## Conformance rules are load-bearing
+
+The validator may only report an **error** for one of the three numbered OKF
+v0.2 §11 conformance rules. Every other finding is a **warning**: §11 forbids
+consumers from rejecting a bundle over optional fields, unknown `type` values,
+unknown keys, broken cross-links or missing `index.md` files. A change that
+promotes soft guidance to an error will be rejected — add a warning instead,
+with the spec section it cites.
 
 ## Determinism
 

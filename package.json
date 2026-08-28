@@ -1,17 +1,20 @@
 {
-  "name": "okf-viewer",
+  "name": "okf-tools",
   "version": "0.1.0",
-  "description": "Generic static-site citation-graph viewer for OKF bundles (markdown + YAML frontmatter). Generates one self-contained HTML file.",
+  "description": "Tools for OKF bundles (markdown + YAML frontmatter): an OKF v0.2 \u00a711 conformance validator, and a static-site citation-graph viewer that generates one self-contained HTML file.",
   "license": "Apache-2.0",
   "author": "jimisola <jimisola@jimisola.com>",
-  "repository": "github:jimisola/okf-viewer",
-  "homepage": "https://github.com/jimisola/okf-viewer#readme",
-  "bugs": "https://github.com/jimisola/okf-viewer/issues",
+  "repository": "github:jimisola/okf-tools",
+  "homepage": "https://github.com/jimisola/okf-tools#readme",
+  "bugs": "https://github.com/jimisola/okf-tools/issues",
   "keywords": [
     "okf",
     "open-knowledge-format",
     "markdown",
     "frontmatter",
+    "validator",
+    "conformance",
+    "linter",
     "citation-graph",
     "knowledge-graph",
     "static-site",
@@ -28,6 +31,8 @@
     "node": ">=24"
   },
   "scripts": {
+    "viewer": "tsx src/cli.ts",
+    "validate": "tsx src/validate-cli.ts",
     "build": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
