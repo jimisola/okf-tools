@@ -32,6 +32,18 @@ const LINK_RE = /\]\((?!(?:[a-z][a-z0-9+.-]*:|\/\/))([^)#\s]+\.md)(?:#[^)]*)?\)/
  * Every `.md` file under `dir`, recursively, in a deterministic
  * (name-sorted, depth-first) order. Absolute paths.
  */
+/**
+ * OKF v0.2 reserves two filenames throughout the hierarchy: `index.md`
+ * (directory listing, §8) and `log.md` (update history, §9). They are not
+ * concept documents. `walkMarkdown` still returns them — conformance
+ * checking has to inspect them — but `parseBundle` never makes them nodes.
+ */
+export const RESERVED_FILENAMES: readonly string[] = ["index.md", "log.md"];
+
+export function isReservedFilename(name: string): boolean {
+  return RESERVED_FILENAMES.includes(name.toLowerCase());
+}
+
 export function walkMarkdown(dir: string): string[] {
   const out: string[] = [];
   const visit = (d: string) => {
@@ -98,7 +110,7 @@ function splitFrontmatter(text: string): {
  */
 export function parseBundle(bundleDir: string, idField = "id"): Bundle {
   const root = path.resolve(bundleDir);
-  const files = walkMarkdown(root);
+  const files = walkMarkdown(root).filter((f) => !isReservedFilename(path.basename(f)));
 
   const byFile = new Map<string, BundleNode>(); // resolved abs path -> node
   const nodes: BundleNode[] = [];

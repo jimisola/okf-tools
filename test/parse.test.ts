@@ -1,6 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseBundle } from "../src/parse.js";
+import { parseBundle, walkMarkdown } from "../src/parse.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/bundle", import.meta.url));
 
@@ -58,5 +61,24 @@ describe("parseBundle", () => {
 
   it("records bundle-relative POSIX file paths", () => {
     expect(byId.get("DOC.001")?.file).toBe("DOC/DOC.001.md");
+  });
+});
+
+describe("reserved filenames (OKF v0.2 §11)", () => {
+  it("walks reserved files but never makes them concepts", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-reserved-"));
+    try {
+      writeFileSync(path.join(dir, "index.md"), '---\nokf_version: "0.2"\n---\n\n* [A](a.md) - x\n');
+      writeFileSync(path.join(dir, "log.md"), "## 2026-08-28\n\nEntry.\n");
+      writeFileSync(path.join(dir, "a.md"), "---\nid: A\ntype: note\n---\n\nBody.\n");
+      expect(parseBundle(dir).nodes.map((n) => n.id)).toEqual(["A"]);
+      expect(walkMarkdown(dir).map((f) => path.basename(f)).sort()).toEqual([
+        "a.md",
+        "index.md",
+        "log.md",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
