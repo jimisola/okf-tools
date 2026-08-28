@@ -1,10 +1,14 @@
 #!/usr/bin/env tsx
+// The viewer CLI: bundle in, one self-contained HTML file out. The other tool
+// in this package is the conformance validator, `src/validate-cli.ts`.
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CONFIG, loadConfig } from "./config.js";
 import { generate } from "./generate.js";
 
-const USAGE = "usage: cli.ts <bundleDir> <outFile> [--config viewer.config.json]";
+const USAGE =
+  "usage: cli.ts <bundleDir> <outFile> [--config viewer.config.json]\n" +
+  "       (to check a bundle for OKF v0.2 conformance, see validate-cli.ts)";
 
 function main(argv: string[]): number {
   const positional: string[] = [];

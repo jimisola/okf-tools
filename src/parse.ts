@@ -28,7 +28,11 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 /** Relative markdown links: `](target.md)` or `](../X/target.md#anchor)`. */
 const LINK_RE = /\]\((?!(?:[a-z][a-z0-9+.-]*:|\/\/))([^)#\s]+\.md)(?:#[^)]*)?\)/g;
 
-function walkMarkdown(dir: string): string[] {
+/**
+ * Every `.md` file under `dir`, recursively, in a deterministic
+ * (name-sorted, depth-first) order. Absolute paths.
+ */
+export function walkMarkdown(dir: string): string[] {
   const out: string[] = [];
   const visit = (d: string) => {
     for (const entry of readdirSync(d, { withFileTypes: true }).sort((a, b) =>
@@ -43,22 +47,47 @@ function walkMarkdown(dir: string): string[] {
   return out;
 }
 
+/**
+ * The outcome of looking for a frontmatter block at the top of a file.
+ *
+ * The three cases are kept apart because conformance checking has to tell
+ * "no block at all" from "a block that does not parse" — the viewer itself
+ * treats both as "no frontmatter".
+ */
+export type FrontmatterResult =
+  | { kind: "absent"; body: string }
+  | { kind: "invalid"; body: string; error: string }
+  | { kind: "present"; data: unknown; body: string };
+
+/** Split a markdown file into its frontmatter block (if any) and its body. */
+export function readFrontmatter(text: string): FrontmatterResult {
+  const m = FRONTMATTER_RE.exec(text);
+  if (!m) return { kind: "absent", body: text };
+  const body = text.slice(m[0].length);
+  try {
+    return { kind: "present", data: parseYaml(m[1] as string), body };
+  } catch (err) {
+    return { kind: "invalid", body, error: (err as Error).message };
+  }
+}
+
+/** Relative `.md` link targets in a markdown body, in document order. */
+export function markdownLinkTargets(body: string): string[] {
+  return [...body.matchAll(LINK_RE)].map((m) => m[1] as string);
+}
+
 function splitFrontmatter(text: string): {
   frontmatter: Record<string, unknown>;
   body: string;
 } {
-  const m = FRONTMATTER_RE.exec(text);
-  if (!m) return { frontmatter: {}, body: text };
-  let frontmatter: Record<string, unknown> = {};
-  try {
-    const parsed = parseYaml(m[1] as string);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      frontmatter = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Malformed YAML: treat as no frontmatter rather than failing the build.
-  }
-  return { frontmatter, body: text.slice(m[0].length) };
+  const result = readFrontmatter(text);
+  // Malformed YAML: treat as no frontmatter rather than failing the build.
+  const data = result.kind === "present" ? result.data : undefined;
+  const frontmatter =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : {};
+  return { frontmatter, body: result.body };
 }
 
 /**
