@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<header>
+  <a id="backlink" href="#" hidden>&larr; back</a>
+  <h1 id="title"></h1>
+  <div class="stats" id="stats"></div>
+  <span class="spacer"></span>
+  <input id="search" type="search" placeholder="Search…" aria-label="Search publications">
+  <select id="layout" aria-label="Layout">
+    <option value="force">force</option>
+    <option value="concentric">concentric</option>
+    <option value="grid">grid</option>
+  </select>
+  <button id="theme" class="chip" title="Theme">theme: system</button>
+</header>
+<div class="controls" id="controls"></div>
+<main>
+  <div id="stage"><svg id="svg" role="img" aria-label="Citation graph"></svg><div id="tip" hidden></div></div>
+  <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Resize details panel" tabindex="0"></div>
+  <aside id="panel"></aside>
+</main>
+<div class="legend" id="legend"></div>
+<script>
+/*__MARKED__*/
+</script>
+<script id="viewer-data" type="application/json">__DATA__</script>
+<script id="viewer-config" type="application/json">__CONFIG__</script>
+<script>
+/*__RUNTIME__*/
+</script>
+</body>
+</html>
