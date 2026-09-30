@@ -998,3 +998,32 @@ describe("the Index shows configured frontmatter columns", () => {
     ).toEqual(["ID", "Title", "Citations"]);
   });
 });
+
+describe("bundle-absolute body links (OKF §6.1)", () => {
+  const ABS = fileURLToPath(new URL("./fixtures/.absolute-tmp", import.meta.url));
+  rmSync(ABS, { recursive: true, force: true });
+  mkdirSync(path.join(ABS, "lib", "DOC"), { recursive: true });
+  mkdirSync(path.join(ABS, "lib", "REF"), { recursive: true });
+  writeFileSync(
+    path.join(ABS, "lib", "DOC", "A.md"),
+    "---\nid: A\ntitle: A\ntype: policy\n---\n\nSee [B](/lib/REF/B.md).\n",
+  );
+  writeFileSync(
+    path.join(ABS, "lib", "REF", "B.md"),
+    "---\nid: B\ntitle: B\ntype: policy\n---\n\nBody.\n",
+  );
+  afterAll(() => rmSync(ABS, { recursive: true, force: true }));
+
+  it("counts the edge and navigates the link in-pane", async () => {
+    const { html } = generate(ABS, resolveConfig({ name: "Absolute" }));
+    const page = browser.newPage();
+    page.content = html;
+    await page.waitUntilComplete();
+    const doc = page.mainFrame.document;
+    expect(doc.getElementById("stats")?.textContent).toContain("1 citations");
+    doc
+      .querySelector('circle[data-id="A"]')
+      ?.dispatchEvent(new page.mainFrame.window.MouseEvent("click", { bubbles: true }));
+    expect(doc.querySelector('#panel .body-md a[data-go="B"]')).toBeTruthy();
+  });
+});

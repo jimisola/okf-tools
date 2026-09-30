@@ -3,14 +3,15 @@ import * as path from "node:path";
 import {
   markdownLinkTargets,
   readFrontmatter,
+  resolveLinkTarget,
   walkMarkdown,
   type FrontmatterResult,
 } from "./parse.js";
 
-/** Filenames that are structural, not concept documents (§8, §9). */
+/** Filenames that are structural, not concept documents (§3.1). */
 export const RESERVED_FILENAMES = ["index.md", "log.md"] as const;
 
-/** Frontmatter `status` values named by the spec; anything else is soft. */
+/** Frontmatter `status` values named by the spec (§5.4); anything else is soft. */
 export const KNOWN_STATUS = ["draft", "stable", "deprecated"] as const;
 
 /** The only frontmatter key a bundle-root `index.md` may carry (§8). */
@@ -19,7 +20,7 @@ const ROOT_INDEX_KEY = "okf_version";
 export interface Finding {
   /** Offending file, bundle-relative, POSIX separators. */
   file: string;
-  /** Spec section this cites, e.g. "§11.2". */
+  /** Spec section this cites, e.g. "§5.2"; "§11.2" is §11's second numbered rule. */
   section: string;
   /** Stable machine-readable identifier for the check. */
   code: string;
@@ -66,8 +67,13 @@ export function normalizeVerified(value: unknown): VerifiedEntry[] {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const ISO_INSTANT =
-  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+const ISO_DATETIME =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/** §7 actor convention: `human:<id>`, `process:<id>` or `<producer>/<version>`. */
+const ACTOR = /^(?:human:\S+|process:\S+|[^\s/:]+\/\S+)$/;
+
+const ATTESTED_COMPUTATION = "Attested Computation";
 
 function calendarDate(text: string): boolean {
   if (!ISO_DATE.test(text)) return false;
@@ -76,14 +82,25 @@ function calendarDate(text: string): boolean {
   return new Date(t).toISOString().slice(0, 10) === text;
 }
 
-/** Parse an ISO 8601 instant; `undefined` when the value is not one. */
-function isoInstant(value: unknown): Date | undefined {
-  if (value instanceof Date) return Number.isNaN(+value) ? undefined : value;
+/**
+ * Parse an ISO 8601 date or datetime; `undefined` when the value is neither.
+ * `offset` is false for a bare date or an offset-less datetime, which are
+ * read as UTC so the result does not depend on the host's time zone.
+ */
+function isoInstant(value: unknown): { at: Date; offset: boolean } | undefined {
+  // The yaml core schema keeps timestamps as strings. A Date comes only from
+  // a YAML 1.1 parse, which has already dropped the offset text.
+  if (value instanceof Date) {
+    return Number.isNaN(+value) ? undefined : { at: value, offset: true };
+  }
   if (typeof value !== "string") return undefined;
   const text = value.trim();
-  if (!ISO_INSTANT.test(text)) return undefined;
-  const ms = Date.parse(ISO_DATE.test(text) ? `${text}T00:00:00Z` : text);
-  return Number.isNaN(ms) ? undefined : new Date(ms);
+  const dt = ISO_DATETIME.exec(text);
+  if (!dt && !ISO_DATE.test(text)) return undefined;
+  const offset = dt?.[1] !== undefined;
+  const iso = !dt ? `${text}T00:00:00Z` : `${text.replace(" ", "T")}${offset ? "" : "Z"}`;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? undefined : { at: new Date(ms), offset };
 }
 
 /**
@@ -111,6 +128,65 @@ function error(ctx: Ctx, f: Finding): void {
 }
 function warn(ctx: Ctx, f: Finding): void {
   ctx.warnings.push(f);
+}
+
+/**
+ * §5: every timestamp-valued key is an ISO 8601 datetime with an explicit UTC
+ * offset. Anything else is a warning; the parsed instant is still returned.
+ */
+function checkInstant(
+  ctx: Ctx,
+  file: string,
+  code: string,
+  label: string,
+  value: unknown,
+): Date | undefined {
+  const parsed = isoInstant(value);
+  if (!parsed) {
+    warn(ctx, {
+      file,
+      section: "§5",
+      code: `${code}.unparseable`,
+      message: `\`${label}\` is not an ISO 8601 datetime`,
+    });
+    return undefined;
+  }
+  if (!parsed.offset) {
+    warn(ctx, {
+      file,
+      section: "§5",
+      code: `${code}.no_offset`,
+      message: `\`${label}\` has no explicit UTC offset, e.g. 2026-06-30T14:00:00Z`,
+    });
+  }
+  return parsed.at;
+}
+
+function checkActor(ctx: Ctx, file: string, code: string, label: string, value: unknown): void {
+  if (typeof value === "string" && ACTOR.test(value.trim())) return;
+  warn(ctx, {
+    file,
+    section: "§7",
+    code,
+    message: `\`${label}\` is ${JSON.stringify(value)}; expected \`human:<id>\`, \`process:<id>\` or \`<producer>/<version>\``,
+  });
+}
+
+function checkUsageWindow(ctx: Ctx, file: string, label: string, value: unknown): void {
+  if (!isMapping(value)) {
+    warn(ctx, {
+      file,
+      section: "§5.1",
+      code: "usage_window.malformed",
+      message: `\`${label}\` is not a mapping of {from, to}`,
+    });
+    return;
+  }
+  for (const key of ["from", "to"]) {
+    if (value[key] !== undefined) {
+      checkInstant(ctx, file, "usage_window", `${label}.${key}`, value[key]);
+    }
+  }
 }
 
 function countLines(text: string): number {
@@ -203,7 +279,7 @@ function checkConcept(
     if (typeof value !== "string" || value.trim() === "") {
       warn(ctx, {
         file,
-        section: "§4",
+        section: "§4.1",
         code: `field.${field}.missing`,
         message: `recommended field \`${field}\` is absent or empty`,
       });
@@ -218,41 +294,34 @@ function checkConcept(
   ) {
     warn(ctx, {
       file,
-      section: "§4",
+      section: "§5.4",
       code: "status.unknown",
       message: `\`status\` is ${JSON.stringify(status)}; expected one of ${KNOWN_STATUS.join(", ")}`,
     });
   }
 
-  // §6 lifecycle.
+  // §5.5: stale when now >= stale_after.
   const staleAfter = data["stale_after"];
   if (staleAfter !== undefined) {
-    const at = isoInstant(staleAfter);
-    if (!at) {
+    const at = checkInstant(ctx, file, "stale_after", "stale_after", staleAfter);
+    if (at && at.getTime() <= ctx.now.getTime()) {
       warn(ctx, {
         file,
-        section: "§6",
-        code: "stale_after.unparseable",
-        message: "`stale_after` is not an ISO 8601 instant",
-      });
-    } else if (at.getTime() < ctx.now.getTime()) {
-      warn(ctx, {
-        file,
-        section: "§6",
+        section: "§5.5",
         code: "concept.stale",
-        message: `stale: \`stale_after\` (${at.toISOString()}) is in the past`,
+        message: `stale: \`stale_after\` (${at.toISOString()}) has passed`,
       });
     }
   }
 
-  // §7 provenance.
+  // §5.2 trust.
   const generated = data["generated"];
   let generatedAt: Date | undefined;
   if (generated !== undefined) {
     if (!isMapping(generated)) {
       warn(ctx, {
         file,
-        section: "§7",
+        section: "§5.2",
         code: "generated.malformed",
         message: "`generated` is not a mapping of {by, at}",
       });
@@ -260,24 +329,20 @@ function checkConcept(
       if (generated["by"] === undefined) {
         warn(ctx, {
           file,
-          section: "§7",
+          section: "§5.2",
           code: "generated.by.missing",
           message: "`generated` has no `by`",
         });
+      } else {
+        checkActor(ctx, file, "generated.by.actor", "generated.by", generated["by"]);
       }
-      generatedAt = isoInstant(generated["at"]);
-      if (generated["at"] !== undefined && !generatedAt) {
-        warn(ctx, {
-          file,
-          section: "§7",
-          code: "generated.at.unparseable",
-          message: "`generated.at` is not an ISO 8601 instant",
-        });
+      if (generated["at"] !== undefined) {
+        generatedAt = checkInstant(ctx, file, "generated.at", "generated.at", generated["at"]);
       }
     }
   }
 
-  // §5.2 / §10.5 attestation. A bare mapping is one element, never a defect.
+  // A bare `verified` mapping is one element, never a defect.
   const verifiedRaw = data["verified"];
   if (verifiedRaw !== undefined) {
     const entries = normalizeVerified(verifiedRaw);
@@ -289,6 +354,7 @@ function checkConcept(
         message: "`verified` is neither a mapping nor a list of mappings",
       });
     }
+    let latest: Date | undefined;
     entries.forEach((entry, i) => {
       const where = `verified[${i}]`;
       if (entry["by"] === undefined) {
@@ -298,33 +364,31 @@ function checkConcept(
           code: "verified.by.missing",
           message: `${where} has no \`by\``,
         });
+      } else {
+        checkActor(ctx, file, "verified.by.actor", `${where}.by`, entry["by"]);
       }
-      const at = isoInstant(entry["at"]);
-      if (!at) {
-        warn(ctx, {
-          file,
-          section: "§5.2",
-          code: "verified.at.unparseable",
-          message: `${where} has no parseable ISO 8601 \`at\``,
-        });
-      } else if (generatedAt && at.getTime() < generatedAt.getTime()) {
-        // §10.5: surface a failing attestation rather than dropping it.
-        warn(ctx, {
-          file,
-          section: "§10.5",
-          code: "verified.superseded",
-          message: `${where} predates \`generated.at\`; the attestation no longer covers this content`,
-        });
-      }
+      const at = checkInstant(ctx, file, "verified.at", `${where}.at`, entry["at"]);
+      if (at && (!latest || at.getTime() > latest.getTime())) latest = at;
     });
+    // Advisory, not a spec rule: §5.2 keeps `verified` independent of
+    // `generated.at`, but content edited since its last check is worth knowing.
+    if (latest && generatedAt && latest.getTime() < generatedAt.getTime()) {
+      warn(ctx, {
+        file,
+        section: "§5.2",
+        code: "verified.superseded",
+        message: "advisory: the content changed after its last verification (latest `verified[].at` predates `generated.at`)",
+      });
+    }
   }
 
+  // §5.1 provenance.
   const sources = data["sources"];
   if (sources !== undefined) {
     if (!Array.isArray(sources)) {
       warn(ctx, {
         file,
-        section: "§7",
+        section: "§5.1",
         code: "sources.malformed",
         message: "`sources` is not a list",
       });
@@ -333,11 +397,40 @@ function checkConcept(
         if (!isMapping(entry) || entry["resource"] === undefined) {
           warn(ctx, {
             file,
-            section: "§7",
+            section: "§5.1",
             code: "sources.resource.missing",
             message: `sources[${i}] has no \`resource\``,
           });
         }
+        if (!isMapping(entry)) return;
+        if (entry["last_modified"] !== undefined) {
+          checkInstant(
+            ctx,
+            file,
+            "sources.last_modified",
+            `sources[${i}].last_modified`,
+            entry["last_modified"],
+          );
+        }
+        if (entry["usage_window"] !== undefined) {
+          checkUsageWindow(ctx, file, `sources[${i}].usage_window`, entry["usage_window"]);
+        }
+      });
+    }
+  }
+  if (data["usage_window"] !== undefined) {
+    checkUsageWindow(ctx, file, "usage_window", data["usage_window"]);
+  }
+
+  // §10.2: `runtime` is REQUIRED for an Attested Computation.
+  if (typeof type === "string" && type.trim() === ATTESTED_COMPUTATION) {
+    const runtime = data["runtime"];
+    if (typeof runtime !== "string" || runtime.trim() === "") {
+      warn(ctx, {
+        file,
+        section: "§10.2",
+        code: "runtime.missing",
+        message: `a \`type: ${ATTESTED_COMPUTATION}\` concept has no \`runtime\``,
       });
     }
   }
@@ -504,18 +597,12 @@ export function validateBundle(
       checkConcept(ctx, file, fm);
     }
 
-    // Broken cross-links are soft (§11).
+    // Broken cross-links are soft: consumers MUST tolerate them (§6.1, §11).
     for (const target of markdownLinkTargets(fm.body)) {
-      let resolved: string;
-      try {
-        resolved = path.resolve(path.dirname(abs), decodeURIComponent(target));
-      } catch {
-        resolved = path.resolve(path.dirname(abs), target);
-      }
-      if (known.has(resolved)) continue;
+      if (known.has(resolveLinkTarget(root, abs, target))) continue;
       warn(ctx, {
         file,
-        section: "§11",
+        section: "§6.1",
         code: "link.broken",
         message: `link target does not resolve inside the bundle: ${target}`,
       });

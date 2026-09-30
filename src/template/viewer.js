@@ -488,7 +488,8 @@ function resolveBodyLink(fromFile, href) {
     return null;
   }
   if (!p.endsWith(".md")) return null;
-  const parts = fromFile.split("/").slice(0, -1);
+  // A leading "/" is bundle-absolute (OKF §6.1): resolve from the root.
+  const parts = p.startsWith("/") ? [] : fromFile.split("/").slice(0, -1);
   for (const seg of p.split("/")) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") parts.pop();

@@ -36,8 +36,8 @@ errors (1):
   DOC/beta.md [§11.1 frontmatter.missing] no YAML frontmatter block
 
 warnings (2):
-  DOC/alpha.md [§6 concept.stale] stale: `stale_after` (2020-01-01T00:00:00.000Z) is in the past
-  DOC/alpha.md [§11 link.broken] link target does not resolve inside the bundle: gone.md
+  DOC/alpha.md [§5.5 concept.stale] stale: `stale_after` (2020-01-01T00:00:00.000Z) has passed
+  DOC/alpha.md [§6.1 link.broken] link target does not resolve inside the bundle: gone.md
 
 NOT CONFORMANT with OKF v0.2 (1 error, 2 warnings)
 ```
@@ -53,7 +53,7 @@ machine-readable report instead:
   "counts": {"concepts": 12, "indexes": 3, "logs": 1},
   "errors":   [{"file": "DOC/beta.md", "section": "§11.1",
                 "code": "frontmatter.missing", "message": "…"}],
-  "warnings": [{"file": "DOC/alpha.md", "section": "§6",
+  "warnings": [{"file": "DOC/alpha.md", "section": "§5.5",
                 "code": "concept.stale", "message": "…", "line": 4}]
 }
 ```
@@ -61,7 +61,8 @@ machine-readable report instead:
 ### Errors versus warnings
 
 The separation is the whole point, and it comes straight from the spec.
-**Errors are only the three numbered §11 conformance rules:**
+**Errors are only the three numbered §11 conformance rules** (cited as
+`§11.1`–`§11.3`):
 
 1. every non-reserved `.md` file has a parseable YAML frontmatter block;
 2. every frontmatter block has a non-empty `type`;
@@ -72,15 +73,26 @@ The separation is the whole point, and it comes straight from the spec.
 **Everything else is a warning**, because §11 says consumers MUST NOT reject a
 bundle for missing optional fields, unknown `type` values, unknown extra
 frontmatter keys, broken cross-links or missing `index.md` files. A bundle with
-warnings and no errors is `"conformant": true`. Warnings cover absent
-recommended fields, unknown `status` values, unparseable or elapsed
-`stale_after`, malformed `generated` / `verified` / `sources` entries,
-out-of-order log entries, index entries that are not
-`* [Title](url) - description`, broken links, and a missing root `index.md`.
+warnings and no errors is `"conformant": true`. Each warning cites the section
+that states the rule:
 
-A bare `verified:` mapping is treated as a one-element list (§5.2), and an
-attestation that predates `generated.at` is surfaced rather than dropped
-(§10.5).
+| Section | Warns about |
+| --- | --- |
+| §4.1 | absent `title` / `description` |
+| §5 | a timestamp (`stale_after`, `generated.at`, `verified[].at`, `sources[].last_modified`, `usage_window`) that is unparseable, or lacks an explicit UTC offset (a bare date, or a datetime with no `Z`/`±hh:mm`) |
+| §5.1 | malformed `sources`, an entry without `resource`, a malformed `usage_window` |
+| §5.2 | malformed `generated` / `verified`, a missing `by`; and, as advice rather than a spec rule, content whose latest `verified[].at` predates `generated.at` |
+| §5.4 | an unknown `status` value |
+| §5.5 | an elapsed `stale_after` (stale when now ≥ `stale_after`) |
+| §6.1 | a broken link |
+| §7 | a `generated.by` / `verified[].by` that is not `human:<id>`, `process:<id>` or `<producer>/<version>` |
+| §8 | a missing root `index.md`, an index entry that is not `* [Title](url) - description` |
+| §9 | out-of-order log entries, frontmatter in a `log.md` |
+| §10.2 | a `type: Attested Computation` concept with no `runtime` |
+
+A bare `verified:` mapping is treated as a one-element list (§5.2). Links may be
+relative or bundle-absolute (`/dir/doc.md`, resolved from the bundle root,
+§6.1). Offset-less timestamps are read as UTC.
 
 Using it as a library:
 
@@ -103,8 +115,9 @@ Example:
 npx tsx src/cli.ts ./my-bundle out/graph.html --config viewer.config.json
 ```
 
-It walks the bundle, extracts the citation graph from the relative `.md` links
-between document bodies, and writes a single portable file you can open
+It walks the bundle, extracts the citation graph from the `.md` links between
+document bodies — relative, or bundle-absolute (`/dir/doc.md`, resolved from the
+bundle root per OKF §6.1) — and writes a single portable file you can open
 locally, attach to an email, or drop on any static host. The page loads nothing
 from any CDN or network. Open `out/graph.html` in a browser; there is no server
 and no build step beyond that one command.
@@ -167,8 +180,8 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
   builds or reloads), concentric (rings by citations received), grid.
 - Node size = citations received; drafts render as hollow rings.
 - Detail pane: full frontmatter, the rendered markdown body, and
-  "Cites" / "Cited by — impact if this changes" lists. Relative `.md` links
-  inside a body navigate in-pane. Frontmatter values that are absolute
+  "Cites" / "Cited by — impact if this changes" lists. Relative and
+  bundle-absolute `.md` links inside a body navigate in-pane. Frontmatter values that are absolute
   `http(s)` URLs — at any nesting depth — render as clickable links; every
   other scheme (`javascript:`, `data:`, `mailto:`) stays inert text. With
   `sourceBaseUrl` set, the header also gets a link — labeled with the
