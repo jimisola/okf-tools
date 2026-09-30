@@ -627,6 +627,14 @@ export function validateBundle(
   };
 }
 
+/** The warnings `--strict` fails on: all of them except the `allowed` codes. */
+export function blockingWarnings(
+  report: ValidationReport,
+  allowed: ReadonlySet<string> = new Set(),
+): Finding[] {
+  return report.warnings.filter((w) => !allowed.has(w.code));
+}
+
 /** Render a report the way the CLI prints it without `--json`. */
 export function formatReport(report: ValidationReport): string {
   const lines: string[] = [];

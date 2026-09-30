@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  blockingWarnings,
   formatReport,
   normalizeVerified,
   validateBundle,
@@ -497,5 +498,25 @@ describe("the repository's own fixture bundle", () => {
     expect(report.errors).toEqual([]);
     expect(report.conformant).toBe(true);
     expect(report.counts.concepts).toBe(4);
+  });
+});
+
+describe("--strict --allow", () => {
+  const fm = (line: string) => `---\ntype: note\ntitle: T\ndescription: D\n${line}\n---\n`;
+  it("excludes allowed codes from the warnings strict fails on, and nothing else", () => {
+    const report = validateBundle(
+      bundle({
+        "a.md": fm('stale_after: "2026-01-01T00:00:00Z"'),
+        "b.md": fm('generated: { by: "nobody", at: "2026-01-01T00:00:00Z" }'),
+        "index.md": "# Docs\n\n* [A](a.md) - D\n* [B](b.md) - D\n",
+      }),
+      { now: new Date("2026-06-01T00:00:00Z") },
+    );
+    const codes = (fs: Finding[]) => fs.map((f) => f.code).sort();
+    expect(codes(blockingWarnings(report))).toEqual(["concept.stale", "generated.by.actor"]);
+    expect(codes(blockingWarnings(report, new Set(["concept.stale"])))).toEqual([
+      "generated.by.actor",
+    ]);
+    expect(report.warnings).toHaveLength(2);
   });
 });

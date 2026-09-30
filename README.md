@@ -25,7 +25,7 @@ Node 24 or newer is required.
 ## Validator
 
 ```sh
-npx tsx src/validate-cli.ts <bundleDir> [--json] [--strict]
+npx tsx src/validate-cli.ts <bundleDir> [--json] [--strict] [--allow <code>]...
 ```
 
 ```
@@ -43,7 +43,10 @@ NOT CONFORMANT with OKF v0.2 (1 error, 2 warnings)
 ```
 
 Exit code is `0` when the bundle is conformant, `1` when it is not, `2` on a
-bad invocation. `--strict` makes warnings fail too. `--json` prints the
+bad invocation. `--strict` makes warnings fail too; `--allow <code>`
+(repeatable) exempts one warning code from that while still reporting it —
+e.g. `--allow concept.stale`, since staleness changes with the date rather
+than with the bundle. `--json` prints the
 machine-readable report instead:
 
 ```jsonc
