@@ -1,7 +1,7 @@
 {
   "name": "okf-tools",
   "version": "0.1.0",
-  "description": "Tools for OKF bundles (markdown + YAML frontmatter): an OKF v0.2 \u00a711 conformance validator, and a static-site citation-graph viewer that generates one self-contained HTML file.",
+  "description": "Tools for OKF bundles (markdown + YAML frontmatter): an OKF v0.2 §11 conformance validator, and a static-site citation-graph viewer that generates one self-contained HTML file.",
   "license": "Apache-2.0",
   "author": "jimisola <jimisola@jimisola.com>",
   "repository": "github:jimisola/okf-tools",
@@ -43,7 +43,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "happy-dom": "20.11.10",
+    "happy-dom": "20.14.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
