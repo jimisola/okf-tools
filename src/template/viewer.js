@@ -365,6 +365,65 @@ function urlLink(value) {
   return a;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// Built with createElementNS/setAttribute — never innerHTML — same rule as
+// every other DOM node in this file.
+function svgIcon(pathData) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of pathData) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+const ICON_PATHS = {
+  github: [
+    "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z",
+  ],
+  external: [
+    "M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z",
+    "M3.75 3A.75.75 0 0 0 3 3.75v9.5c0 .414.336.75.75.75h9.5a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-1.5 0V12.5H4.5v-8h2.75a.75.75 0 0 0 0-1.5h-3.5Z",
+  ],
+};
+
+// A node's "View source" link, built from CONFIG.sourceBaseUrl + n.file. The
+// icon and label reflect the actual host — a GitHub mark for github.com,
+// a generic external-link glyph for anything else — so it never claims
+// "GitHub" for a source hosted somewhere it isn't. Parsed and protocol-
+// checked rather than regex-tested: `href` is set from the *parsed* URL,
+// never the raw concatenated string, so a misconfigured (relative,
+// scheme-less, or javascript:) sourceBaseUrl renders nothing.
+function sourceLink(n) {
+  let parsed;
+  try {
+    parsed = new URL(CONFIG.sourceBaseUrl + n.file);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const isGitHub = parsed.hostname.replace(/^www\./, "") === "github.com";
+  const a = el("a", "ext src-link");
+  a.href = parsed.href;
+  a.title = "This publication's file in the bundle's source repository";
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  const icon = el("span", "src-icon");
+  icon.append(svgIcon(isGitHub ? ICON_PATHS.github : ICON_PATHS.external));
+  // The link text is the filename, not a "source" word — a bundle's own
+  // frontmatter often has source/sources provenance fields already, and
+  // this link isn't provenance, it's just "here is the file you're reading".
+  a.append(icon, document.createTextNode(n.file.split("/").pop()));
+  return a;
+}
+
 // A frontmatter scalar as a DOM node: an anchor for http(s) URLs, plain text
 // otherwise. Built with createElement/textContent — never innerHTML.
 function scalarNode(value) {
@@ -1119,6 +1178,10 @@ function renderPanel() {
 
   const n = byId.get(selected);
   panel.append(el("p", "pid mono", n.id), el("p", "ptitle", titleOf(n)));
+  if (CONFIG.sourceBaseUrl) {
+    const link = sourceLink(n);
+    if (link) panel.append(link);
+  }
 
   const meta = el("div", "meta");
   const type = typeOf(n);

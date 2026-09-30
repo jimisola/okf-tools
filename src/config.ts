@@ -98,6 +98,13 @@ export interface ViewerConfig {
   indexColumns: IndexColumnConfig[];
   /** Optional header back-link href. */
   backLink?: string;
+  /**
+   * Optional base URL for a node's source file. When set, the detail pane
+   * links to `sourceBaseUrl + node.file` (POSIX-relative, e.g. `DOC/DOC.001.md`),
+   * so a viewer generated from a repo can link each publication back to its
+   * markdown source (e.g. a GitHub `blob/main/` URL for the bundle root).
+   */
+  sourceBaseUrl?: string;
 }
 
 export const DEFAULT_CONFIG: ViewerConfig = {
@@ -202,6 +209,7 @@ export function resolveConfig(partial: unknown): ViewerConfig {
     config.draft = { field: p.draft.field, value: p.draft.value };
   }
   if (typeof p.backLink === "string") config.backLink = p.backLink;
+  if (typeof p.sourceBaseUrl === "string") config.sourceBaseUrl = p.sourceBaseUrl;
   return config;
 }
 

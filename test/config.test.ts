@@ -22,12 +22,14 @@ describe("resolveConfig", () => {
       facets: ["type", "domain", 7],
       draft: { field: "lifecycle", value: "draft" },
       backLink: "../",
+      sourceBaseUrl: "https://github.com/org/repo/blob/main/my-bundle/",
       palette: { policy: "#3b82f6" },
     });
     expect(c.name).toBe("My Corpus");
     expect(c.facets).toEqual([{ key: "type" }, { key: "domain" }]);
     expect(c.draft).toEqual({ field: "lifecycle", value: "draft" });
     expect(c.backLink).toBe("../");
+    expect(c.sourceBaseUrl).toBe("https://github.com/org/repo/blob/main/my-bundle/");
     expect(c.palette).toEqual({ policy: "#3b82f6" });
     expect(c.idField).toBe("id"); // untouched default
   });

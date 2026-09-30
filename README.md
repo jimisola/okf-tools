@@ -138,7 +138,11 @@ Every key is optional — `{}` (or no `--config` at all) works on any bundle.
   "searchFields": [],                 // frontmatter keys the search box matches;
                                       // empty/absent = id, title, plus every string
                                       // or string-array frontmatter value
-  "backLink": "../"                   // optional header back-link
+  "backLink": "../",                  // optional header back-link
+  "sourceBaseUrl": "https://github.com/org/repo/blob/main/my-bundle/"
+                                      // optional: detail pane gets a link,
+                                      // labeled with the filename, to
+                                      // sourceBaseUrl + node.file
 }
 ```
 
@@ -166,7 +170,11 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
   "Cites" / "Cited by — impact if this changes" lists. Relative `.md` links
   inside a body navigate in-pane. Frontmatter values that are absolute
   `http(s)` URLs — at any nesting depth — render as clickable links; every
-  other scheme (`javascript:`, `data:`, `mailto:`) stays inert text.
+  other scheme (`javascript:`, `data:`, `mailto:`) stays inert text. With
+  `sourceBaseUrl` set, the header also gets a link — labeled with the
+  filename, not the word "source" — to the node's markdown file, since a
+  bundle's own frontmatter often has its own `source`/`sources` provenance
+  fields and this link isn't that; it's just the file being read.
 - Empty detail pane (nothing selected): a two-option toggle between
   **Index** — a table of every publication currently visible — and
   **Overview**, the bundle-root `index.md` rendered as markdown, with its
