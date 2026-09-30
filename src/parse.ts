@@ -37,7 +37,11 @@ export interface Bundle {
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
-/** Relative markdown links: `](target.md)` or `](../X/target.md#anchor)`. */
+/**
+ * Links to `.md` files: relative (`](../X/target.md#anchor)`) or
+ * bundle-absolute (`](/X/target.md)`, §6.1). URLs with a scheme and
+ * protocol-relative `//` links are not concept links.
+ */
 const LINK_RE = /\]\((?!(?:[a-z][a-z0-9+.-]*:|\/\/))([^)#\s]+\.md)(?:#[^)]*)?\)/g;
 
 /**
@@ -95,9 +99,26 @@ export function readFrontmatter(text: string): FrontmatterResult {
   }
 }
 
-/** Relative `.md` link targets in a markdown body, in document order. */
+/** `.md` link targets in a markdown body, in document order. */
 export function markdownLinkTargets(body: string): string[] {
   return [...body.matchAll(LINK_RE)].map((m) => m[1] as string);
+}
+
+/**
+ * The absolute path a link target in `fromFile` points at. A leading `/` is
+ * bundle-absolute (§6.1) and resolves against `root`; anything else resolves
+ * against the linking file's directory.
+ */
+export function resolveLinkTarget(root: string, fromFile: string, target: string): string {
+  let decoded = target;
+  try {
+    decoded = decodeURIComponent(target);
+  } catch {
+    // Malformed percent-encoding: resolve the target as written.
+  }
+  return decoded.startsWith("/")
+    ? path.join(root, decoded)
+    : path.resolve(path.dirname(fromFile), decoded);
 }
 
 function splitFrontmatter(text: string): {
@@ -116,9 +137,9 @@ function splitFrontmatter(text: string): {
 
 /**
  * Walk a bundle directory, parse every markdown file, and extract the
- * citation graph. Edges are the relative `.md` links between bodies,
- * resolved against each file's directory (so `../REF/REF.001.md` works);
- * links that resolve outside the bundle are dropped.
+ * citation graph. Edges are the `.md` links between bodies, resolved by
+ * `resolveLinkTarget` (so both `../REF/REF.001.md` and `/REF/REF.001.md`
+ * work); links that resolve outside the bundle are dropped.
  */
 export function parseBundle(bundleDir: string, idField = "id"): Bundle {
   const root = path.resolve(bundleDir);
@@ -149,10 +170,8 @@ export function parseBundle(bundleDir: string, idField = "id"): Bundle {
   const edges: [string, string][] = [];
   for (const abs of files) {
     const node = byFile.get(abs) as BundleNode;
-    for (const m of node.body.matchAll(LINK_RE)) {
-      const target = byFile.get(
-        path.resolve(path.dirname(abs), decodeURIComponent(m[1] as string)),
-      );
+    for (const link of markdownLinkTargets(node.body)) {
+      const target = byFile.get(resolveLinkTarget(root, abs, link));
       if (!target || target.id === node.id) continue;
       const key = `${node.id}\u001f${target.id}`;
       if (edgeSet.has(key)) continue;

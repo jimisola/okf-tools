@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseBundle, walkMarkdown } from "../src/parse.js";
+import { parseBundle, resolveLinkTarget, walkMarkdown } from "../src/parse.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/bundle", import.meta.url));
 
@@ -68,7 +68,7 @@ describe("parseBundle", () => {
   });
 });
 
-describe("reserved filenames (OKF v0.2 §11)", () => {
+describe("reserved filenames (OKF v0.2 §3.1)", () => {
   it("walks reserved files but never makes them concepts", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "okf-reserved-"));
     try {
@@ -129,5 +129,35 @@ describe("bundle-root index.md (OKF v0.2 §8)", () => {
       writeFileSync(path.join(dir, "sub", "index.md"), "# Nested\n\nNot the bundle root.\n");
     });
     expect(bundle.index).toBeUndefined();
+  });
+});
+
+describe("bundle-absolute links (OKF v0.2 §6.1)", () => {
+  it("resolves a leading / against the bundle root, not the filesystem root", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-abs-"));
+    try {
+      mkdirSync(path.join(dir, "lib", "DOC"), { recursive: true });
+      mkdirSync(path.join(dir, "lib", "REF"), { recursive: true });
+      writeFileSync(
+        path.join(dir, "lib", "DOC", "A.md"),
+        "---\nid: A\ntype: note\n---\n\nSee [B](/lib/REF/B.md) and [gone](/lib/REF/gone.md).\n",
+      );
+      writeFileSync(path.join(dir, "lib", "REF", "B.md"), "---\nid: B\ntype: note\n---\n\nBody.\n");
+      const bundle = parseBundle(dir);
+      expect(bundle.edges).toEqual([["A", "B"]]);
+      expect(bundle.islands).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves relative targets against the linking file, and tolerates bad escapes", () => {
+    const root = path.resolve("/bundle");
+    const from = path.join(root, "lib", "DOC", "A.md");
+    const b = path.join(root, "lib", "REF", "B.md");
+    expect(resolveLinkTarget(root, from, "/lib/REF/B.md")).toBe(b);
+    expect(resolveLinkTarget(root, from, "../REF/B.md")).toBe(b);
+    expect(resolveLinkTarget(root, from, "B%20C.md")).toBe(path.join(root, "lib", "DOC", "B C.md"));
+    expect(resolveLinkTarget(root, from, "100%.md")).toBe(path.join(root, "lib", "DOC", "100%.md"));
   });
 });

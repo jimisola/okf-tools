@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  blockingWarnings,
   formatReport,
   normalizeVerified,
   validateBundle,
@@ -209,6 +210,22 @@ describe("§11 — what a consumer MUST NOT reject a bundle for", () => {
     expect(has(report.warnings, "link.broken")).toBe(true);
   });
 
+  it("resolves bundle-absolute links against the bundle root (§6.1)", () => {
+    const report = validateBundle(
+      bundle({
+        "lib/DOC/a.md": `${CONCEPT}\nSee [b](/lib/REF/b.md).\n`,
+        "lib/REF/b.md": CONCEPT,
+      }),
+    );
+    expect(has(report.warnings, "link.broken")).toBe(false);
+    const broken = validateBundle(
+      bundle({ "lib/DOC/a.md": `${CONCEPT}\nSee [gone](/lib/REF/gone.md).\n` }),
+    );
+    expect(broken.warnings.find((w) => w.code === "link.broken")?.message).toContain(
+      "/lib/REF/gone.md",
+    );
+  });
+
   it("accepts a bundle with no index.md", () => {
     const report = validateBundle(bundle({ "a.md": CONCEPT }));
     expect(report.conformant).toBe(true);
@@ -247,29 +264,175 @@ describe("§5.2 — a bare verified mapping is a one-element list", () => {
     expect(codes(bare.warnings)).not.toContain("verified.malformed");
   });
 
-  it("surfaces, rather than drops, an attestation older than the content", () => {
+  const trust = (verified: string) =>
+    "---\ntype: note\ntitle: T\ndescription: D\n" +
+    'generated:\n  by: exporter/1.0\n  at: "2026-05-01T00:00:00Z"\n' +
+    `verified:\n${verified}---\n`;
+
+  it("advises, without calling it attestation, when content changed since verification", () => {
     const report = validateBundle(
-      bundle({
-        "a.md":
-          "---\ntype: note\ntitle: T\ndescription: D\n" +
-          'generated:\n  by: pipeline\n  at: "2026-05-01T00:00:00Z"\n' +
-          'verified:\n  by: someone\n  at: "2026-01-01T00:00:00Z"\n---\n',
-      }),
+      bundle({ "a.md": trust('  by: human:someone\n  at: "2026-01-01T00:00:00Z"\n') }),
     );
     expect(report.conformant).toBe(true);
-    expect(has(report.warnings, "verified.superseded")).toBe(true);
+    const finding = report.warnings.find((w) => w.code === "verified.superseded");
+    expect(finding).toMatchObject({ section: "§5.2" });
+    expect(finding?.message).toContain("advisory");
+    expect(finding?.message).not.toContain("attestation");
+  });
+
+  it("judges supersession by the latest verification only", () => {
+    const report = validateBundle(
+      bundle({
+        "a.md": trust(
+          '  - { by: process:nightly, at: "2026-01-01T00:00:00Z" }\n' +
+            '  - { by: human:someone, at: "2026-06-01T00:00:00Z" }\n',
+        ),
+      }),
+    );
+    expect(report.warnings).toEqual([expect.objectContaining({ code: "index.missing" })]);
   });
 });
 
-describe("§6 — staleness", () => {
+describe("§5 — timestamps carry an explicit UTC offset", () => {
+  const fm = (line: string) => `---\ntype: note\ntitle: T\ndescription: D\n${line}\n---\n`;
+  const warningsFor = (line: string) =>
+    validateBundle(bundle({ "a.md": fm(line) }), { now: new Date("2026-01-01T00:00:00Z") })
+      .warnings.filter((w) => w.code !== "index.missing");
+
+  it("accepts Z and numeric offsets, quoted or not", () => {
+    expect(warningsFor('stale_after: "2027-01-01T00:00:00Z"')).toEqual([]);
+    expect(warningsFor("stale_after: 2027-01-01T00:00:00Z")).toEqual([]);
+    expect(warningsFor('stale_after: "2027-01-01T02:00:00+02:00"')).toEqual([]);
+  });
+
+  it("warns, but does not reject, a bare date or an offset-less datetime", () => {
+    for (const value of ['"2027-01-01"', "2027-01-01", '"2027-01-01T00:00:00"']) {
+      const report = validateBundle(bundle({ "a.md": fm(`stale_after: ${value}`) }));
+      expect(report.conformant).toBe(true);
+      expect(codes(report.warnings)).toContain("stale_after.no_offset");
+      expect(report.warnings.find((w) => w.code === "stale_after.no_offset")?.section).toBe("§5");
+    }
+  });
+
+  it("checks every timestamp-valued key", () => {
+    expect(codes(warningsFor('generated: { by: human:a, at: "2026-01-01" }'))).toEqual([
+      "generated.at.no_offset",
+    ]);
+    expect(codes(warningsFor('verified: { by: human:a, at: "2026-01-01" }'))).toEqual([
+      "verified.at.no_offset",
+    ]);
+    expect(
+      codes(
+        warningsFor(
+          'sources:\n  - { resource: x, last_modified: "2026-01-01", usage_window: { from: "2026-01-01", to: never } }\n' +
+            'usage_window: { from: "2026-01-01T00:00:00Z", to: "2026-02-01T00:00:00" }',
+        ),
+      ),
+    ).toEqual([
+      "sources.last_modified.no_offset",
+      "usage_window.no_offset",
+      "usage_window.no_offset",
+      "usage_window.unparseable",
+    ]);
+  });
+
+  it("reads an offset-less value as UTC, whatever the host zone", () => {
+    const report = validateBundle(
+      bundle({ "a.md": fm('stale_after: "2026-06-01T00:00:00"') }),
+      { now: new Date("2026-06-01T00:00:00Z") },
+    );
+    expect(has(report.warnings, "concept.stale")).toBe(true);
+  });
+});
+
+describe("§7 — actor convention", () => {
+  const fm = (lines: string) => `---\ntype: note\ntitle: T\ndescription: D\n${lines}---\n`;
+  const actorWarnings = (lines: string) =>
+    validateBundle(bundle({ "a.md": fm(lines) })).warnings.filter((w) =>
+      w.code.endsWith(".actor"),
+    );
+
+  it("accepts human:<id>, process:<id> and <producer>/<version>", () => {
+    expect(
+      actorWarnings(
+        'generated: { by: reference_agent/gemini-2.5-pro, at: "2026-01-01T00:00:00Z" }\n' +
+          "verified:\n" +
+          '  - { by: human:ahormati, at: "2026-01-02T00:00:00Z" }\n' +
+          '  - { by: process:finance-nightly, at: "2026-01-03T00:00:00Z" }\n',
+      ),
+    ).toEqual([]);
+  });
+
+  it("warns, but does not reject, any other actor", () => {
+    const found = actorWarnings(
+      'generated: { by: pipeline, at: "2026-01-01T00:00:00Z" }\n' +
+        'verified: { by: "human:", at: "2026-01-02T00:00:00Z" }\n',
+    );
+    expect(found.map((f) => [f.code, f.section])).toEqual([
+      ["generated.by.actor", "§7"],
+      ["verified.by.actor", "§7"],
+    ]);
+    expect(found[0]?.message).toContain('"pipeline"');
+  });
+});
+
+describe("§10.2 — Attested Computation contract", () => {
+  const ac = (extra: string) =>
+    `---\ntype: Attested Computation\ntitle: T\ndescription: D\n${extra}---\n`;
+
+  it("warns, but does not reject, a computation with no runtime", () => {
+    const report = validateBundle(bundle({ "a.md": ac("") }));
+    expect(report.conformant).toBe(true);
+    expect(report.warnings.find((w) => w.code === "runtime.missing")?.section).toBe("§10.2");
+  });
+
+  it("accepts a computation that names its runtime, and ignores other types", () => {
+    for (const file of [ac("runtime: bigquery\n"), CONCEPT]) {
+      const report = validateBundle(bundle({ "a.md": file }));
+      expect(has(report.warnings, "runtime.missing")).toBe(false);
+    }
+  });
+});
+
+describe("section citations", () => {
+  it("cites the spec section that states each rule", () => {
+    const report = validateBundle(
+      bundle({
+        "a.md":
+          "---\ntype: note\nstatus: retired\nstale_after: never\ngenerated: 1\nsources: {}\n---\n\n[x](gone.md)\n",
+      }),
+    );
+    const sections = Object.fromEntries(report.warnings.map((w) => [w.code, w.section]));
+    expect(sections).toEqual({
+      "field.title.missing": "§4.1",
+      "field.description.missing": "§4.1",
+      "status.unknown": "§5.4",
+      "stale_after.unparseable": "§5",
+      "generated.malformed": "§5.2",
+      "sources.malformed": "§5.1",
+      "link.broken": "§6.1",
+      "index.missing": "§8",
+    });
+  });
+});
+
+describe("§5.5 — staleness", () => {
   const now = new Date("2026-06-01T00:00:00Z");
 
   it("marks a concept whose stale_after has passed", () => {
     const report = validateBundle(
-      bundle({ "a.md": '---\ntype: note\nstale_after: "2026-01-01"\n---\n' }),
+      bundle({ "a.md": '---\ntype: note\nstale_after: "2026-01-01T00:00:00Z"\n---\n' }),
       { now },
     );
     expect(report.conformant).toBe(true);
+    expect(report.warnings.find((w) => w.code === "concept.stale")?.section).toBe("§5.5");
+  });
+
+  it("is stale at the stale_after instant itself (now >= stale_after)", () => {
+    const report = validateBundle(
+      bundle({ "a.md": '---\ntype: note\nstale_after: "2026-06-01T00:00:00Z"\n---\n' }),
+      { now },
+    );
     expect(has(report.warnings, "concept.stale")).toBe(true);
   });
 
@@ -335,5 +498,25 @@ describe("the repository's own fixture bundle", () => {
     expect(report.errors).toEqual([]);
     expect(report.conformant).toBe(true);
     expect(report.counts.concepts).toBe(4);
+  });
+});
+
+describe("--strict --allow", () => {
+  const fm = (line: string) => `---\ntype: note\ntitle: T\ndescription: D\n${line}\n---\n`;
+  it("excludes allowed codes from the warnings strict fails on, and nothing else", () => {
+    const report = validateBundle(
+      bundle({
+        "a.md": fm('stale_after: "2026-01-01T00:00:00Z"'),
+        "b.md": fm('generated: { by: "nobody", at: "2026-01-01T00:00:00Z" }'),
+        "index.md": "# Docs\n\n* [A](a.md) - D\n* [B](b.md) - D\n",
+      }),
+      { now: new Date("2026-06-01T00:00:00Z") },
+    );
+    const codes = (fs: Finding[]) => fs.map((f) => f.code).sort();
+    expect(codes(blockingWarnings(report))).toEqual(["concept.stale", "generated.by.actor"]);
+    expect(codes(blockingWarnings(report, new Set(["concept.stale"])))).toEqual([
+      "generated.by.actor",
+    ]);
+    expect(report.warnings).toHaveLength(2);
   });
 });

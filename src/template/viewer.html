@@ -14,13 +14,11 @@
   <h1 id="title"></h1>
   <div class="stats" id="stats"></div>
   <span class="spacer"></span>
-  <input id="search" type="search" placeholder="Search…" aria-label="Search publications">
-  <select id="layout" aria-label="Layout">
-    <option value="force">force</option>
-    <option value="concentric">concentric</option>
-    <option value="grid">grid</option>
-  </select>
-  <button id="theme" class="chip" title="Theme">theme: system</button>
+  <input id="search" type="search" placeholder="Search publications…" aria-label="Search publications">
+  <!-- Beside the search, because that is where you are looking when you want
+       out of a filter — hidden entirely while there is nothing to clear. -->
+  <button id="reset" class="chip" hidden
+          title="Clear the search, the filters and the selection">Clear filters</button>
 </header>
 <div class="controls" id="controls"></div>
 <main>
@@ -28,7 +26,20 @@
   <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Resize details panel" tabindex="0"></div>
   <aside id="panel"></aside>
 </main>
-<div class="legend" id="legend"></div>
+<div class="footbar">
+  <div class="legend" id="legend"></div>
+  <!-- How the graph is drawn and how the page looks: view settings, not
+       filters, so they sit out of the way at the foot rather than competing
+       with the search box. -->
+  <div class="viewopts">
+    <select id="layout" aria-label="Graph layout">
+      <option value="force">force</option>
+      <option value="concentric">concentric</option>
+      <option value="grid">grid</option>
+    </select>
+    <button id="theme" class="chip" title="Theme">theme: system</button>
+  </div>
+</div>
 <script>
 /*__MARKED__*/
 </script>
