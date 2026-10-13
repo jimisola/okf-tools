@@ -42,7 +42,7 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@types/node": "26.6.3",
+    "@types/node": "26.6.5",
     "happy-dom": "20.14.5",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
