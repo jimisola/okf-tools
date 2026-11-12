@@ -1028,3 +1028,275 @@ describe("bundle-absolute body links (OKF §6.1)", () => {
     expect(doc.querySelector('#panel .body-md a[data-go="B"]')).toBeTruthy();
   });
 });
+
+describe("trust and staleness badges, deep links", () => {
+  const TRUST = fileURLToPath(new URL("./fixtures/.trust-tmp", import.meta.url));
+  rmSync(TRUST, { recursive: true, force: true });
+  mkdirSync(TRUST, { recursive: true });
+  const page = (name: string, extra: string, body = "") =>
+    writeFileSync(
+      path.join(TRUST, `${name}.md`),
+      `---\nid: ${name}\ntitle: Page ${name}\ntype: note\n${extra}---\n\n# ${name}\n\n${body}\n`,
+    );
+  page("HUMAN", "verified:\n  - { by: process:nightly, at: 2026-01-02T00:00:00Z }\n  - { by: human:ana, at: 2026-01-01T00:00:00Z }\n");
+  page("MACHINE", "verified: { by: process:nightly, at: 2026-01-02T00:00:00Z }\n");
+  // Targets carry the `user-content-` prefix DOMPurify would add: these tests
+  // run with a pass-through sanitizer (sanitize.test.ts checks the real one).
+  page(
+    "STALE",
+    'stale_after: "2020-01-01T00:00:00Z"\n',
+    "See [usage](#usage), [named](#named), [nowhere](#nowhere), [top](#) and [human](HUMAN.md).\n\n" +
+      '<h2 id="user-content-usage">Usage</h2>\n\n<a name="user-content-named"></a>\n',
+  );
+  page("FRESH", 'stale_after: "2999-01-01T00:00:00Z"\n');
+  page("OFFSET", 'stale_after: "2020-01-01T23:00:00-05:00"\n');
+  page("IMPOSSIBLE", 'stale_after: "2020-02-30"\n');
+  page("LOWERCASE", 'stale_after: "2020-01-01t00:00:00z"\n');
+  page("NOBODY", 'verified: { by: "human:", at: 2026-01-01T00:00:00Z }\n');
+  page("AGENT", "verified: { by: reference_agent/gemini-2.5-pro, at: 2026-01-01T00:00:00Z }\n");
+  page("NOBY", "verified: { at: 2026-01-01T00:00:00Z }\n");
+  page("BADACTOR", "verified: { by: nobody, at: 2026-01-01T00:00:00Z }\n");
+  page("NESTED", "verified: [[]]\n");
+  page("MIXED", "verified:\n  - { by: \"human:\", at: 2026-01-01T00:00:00Z }\n  - { by: process:nightly, at: 2026-01-01T00:00:00Z }\n");
+  writeFileSync(path.join(TRUST, "slash.md"), "---\nid: A/B\ntitle: Slash\ntype: note\n---\n\nSlash in the id.\n");
+  afterAll(() => rmSync(TRUST, { recursive: true, force: true }));
+
+  async function load(url = "http://localhost/viewer.html", dir = TRUST) {
+    const { html } = generate(dir, resolveConfig({ name: "Trust" }));
+    const p = browser.newPage();
+    p.url = url;
+    p.content = withoutSanitizer(html);
+    await p.waitUntilComplete();
+    return p;
+  }
+  const open = (p: Awaited<ReturnType<typeof load>>, id: string) =>
+    p.mainFrame.document
+      .querySelector(`circle[data-id="${id}"]`)
+      ?.dispatchEvent(new p.mainFrame.window.MouseEvent("click", { bubbles: true }));
+  // Clicks a body link and says whether the page cancelled the navigation.
+  const follow = (p: Awaited<ReturnType<typeof load>>, href: string) => {
+    const a = p.mainFrame.document.querySelector(`#panel .body-md a[href="${href}"]`);
+    const ev = new p.mainFrame.window.MouseEvent("click", { bubbles: true, cancelable: true });
+    a?.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  const signals = (p: Awaited<ReturnType<typeof load>>) =>
+    [...p.mainFrame.document.querySelectorAll("#panel .signals .signal")].map((s) => s.textContent);
+
+  it.each([
+    ["HUMAN", ["human-reviewed"]],
+    ["MACHINE", ["machine-confirmed"]],
+    ["STALE", ["stale since 2020-01-01", "unverified"]],
+    ["FRESH", ["unverified"]],
+    // the day as written, not the UTC day (2020-01-02)
+    ["OFFSET", ["stale since 2020-01-01", "unverified"]],
+    // rolled over by Date.parse to 2020-03-01: not a date, so no badge
+    ["IMPOSSIBLE", ["unverified"]],
+    // lowercase `t` and `z`, which the validator accepts too
+    ["LOWERCASE", ["stale since 2020-01-01", "unverified"]],
+    // entries without a §7 actor do not count
+    ["NOBODY", ["unverified"]],
+    ["NOBY", ["unverified"]],
+    ["BADACTOR", ["unverified"]],
+    ["NESTED", ["unverified"]],
+    ["MIXED", ["machine-confirmed"]],
+    ["AGENT", ["machine-confirmed"]],
+  ])("derives the badges for %s", async (id, expected) => {
+    const p = await load();
+    open(p, id);
+    expect(signals(p)).toEqual(expected);
+  });
+
+  it("reads a stale_after without an offset as UTC, whatever the viewer's zone", async () => {
+    const dir = fileURLToPath(new URL("./fixtures/.trust-utc-tmp", import.meta.url));
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    // Offset-less wall-clock UTC: 1h ago and 1h ahead. Read as local time, one
+    // of them flips in UTC-5 and the other in UTC+9.
+    const utc = (ms: number) => new Date(Date.now() + ms).toISOString().slice(0, 19);
+    const [past, future] = [utc(-3_600_000), utc(3_600_000)];
+    writeFileSync(path.join(dir, "PAST.md"), `---\nid: PAST\ntype: note\nstale_after: "${past}"\n---\n`);
+    writeFileSync(path.join(dir, "FUTURE.md"), `---\nid: FUTURE\ntype: note\nstale_after: "${future}"\n---\n`);
+    const tz = process.env.TZ;
+    try {
+      for (const zone of ["America/New_York", "Asia/Tokyo"]) {
+        process.env.TZ = zone;
+        const p = await load("http://localhost/viewer.html#/PAST", dir);
+        expect(signals(p), zone).toEqual([`stale since ${past.slice(0, 10)}`]);
+        const q = await load("http://localhost/viewer.html#/FUTURE", dir);
+        expect(q.mainFrame.document.querySelector("#panel .signals"), zone).toBeNull();
+      }
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows no trust tier when no page records verification", async () => {
+    const p = await load("http://localhost/viewer.html", FIXTURE);
+    open(p, "DOC.001");
+    expect(p.mainFrame.document.querySelector("#panel .signals")).toBeNull();
+  });
+
+  it.each([
+    ["empty", "verified: []\n"],
+    ["invalid", 'verified:\n  - { by: "human:", at: 2026-01-01T00:00:00Z }\n  - { by: nobody }\n  - []\n'],
+  ])("does not show tiers for a bundle whose only verified value is %s", async (_, verified) => {
+    const dir = fileURLToPath(new URL("./fixtures/.trust-empty-tmp", import.meta.url));
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "E.md"), `---\nid: E\ntype: note\n${verified}---\n\nBody.\n`);
+    try {
+      const p = await load("http://localhost/viewer.html#/E", dir);
+      expect(p.mainFrame.document.querySelector("#panel .signals")).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("round-trips an id with a slash through the hash", async () => {
+    const p = await load();
+    open(p, "A/B");
+    expect(p.mainFrame.window.location.hash).toBe("#/A/B");
+    const q = await load("http://localhost/viewer.html#/A%2FB");
+    expect(q.mainFrame.document.querySelector("#panel .pid")?.textContent).toBe("A/B");
+    // the other spelling is corrected in place, not as a new history entry
+    expect(q.mainFrame.window.location.hash).toBe("#/A/B");
+    expect(q.mainFrame.window.history.length).toBe(1);
+  });
+
+  it("adds no history entry on load, even for an unknown id", async () => {
+    for (const hash of ["", "#/STALE", "#/NOPE"]) {
+      const p = await load("http://localhost/viewer.html" + hash);
+      expect(p.mainFrame.window.history.length).toBe(1);
+    }
+  });
+
+  it("makes each opened page a history entry, and Back returns to the previous one", async () => {
+    const p = await load();
+    const w = p.mainFrame.window;
+    open(p, "HUMAN");
+    open(p, "MACHINE");
+    expect(w.history.length).toBe(3);
+    w.history.back();
+    await p.waitUntilComplete();
+    expect(p.mainFrame.document.querySelector("#panel .pid")?.textContent).toBe("HUMAN");
+    w.history.back();
+    await p.waitUntilComplete();
+    expect(p.mainFrame.document.querySelector("#panel .pid")).toBeNull();
+  });
+
+  it("scrolls the panel to the top when Back or a new hash changes the page", async () => {
+    const p = await load();
+    const w = p.mainFrame.window;
+    const panel = p.mainFrame.document.getElementById("panel") as HTMLElement;
+    open(p, "HUMAN");
+    open(p, "MACHINE");
+    panel.scrollTop = 120;
+    w.history.back();
+    await p.waitUntilComplete();
+    expect(panel.scrollTop).toBe(0);
+    panel.scrollTop = 120;
+    w.location.hash = "#/STALE";
+    await p.waitUntilComplete();
+    expect(panel.scrollTop).toBe(0);
+  });
+
+  it("does not rewrite the URL when the page stays the same", async () => {
+    const p = await load("http://localhost/viewer.html#/STALE");
+    const w = p.mainFrame.window;
+    expect(follow(p, "#usage")).toBe(true);
+    const search = p.mainFrame.document.getElementById("search") as HTMLInputElement;
+    search.value = "page";
+    search.dispatchEvent(new w.Event("input", { bubbles: true }));
+    await p.waitUntilComplete();
+    expect(w.location.hash).toBe("#/STALE");
+    expect(w.history.length).toBe(1);
+  });
+
+  it("falls back to the hash when the history API throws, replacing where it would have", async () => {
+    const p = await load();
+    const w = p.mainFrame.window;
+    open(p, "HUMAN");
+    const refuse = () => {
+      throw new w.DOMException("refused", "SecurityError");
+    };
+    w.history.pushState = refuse;
+    w.history.replaceState = refuse;
+    const replaced: string[] = [];
+    w.location.replace = (url: string | URL) => void replaced.push(String(url));
+    open(p, "MACHINE");
+    expect(w.location.hash).toBe("#/MACHINE");
+    expect(replaced).toEqual([]);
+    // the same page spelled differently is corrected in place
+    w.location.hash = "#/A%2FB";
+    await p.waitUntilComplete();
+    expect(replaced).toEqual(["#/A/B"]);
+  });
+
+  it("opens the page named in the #/ hash on load, and ignores an unknown one", async () => {
+    const p = await load("http://localhost/viewer.html#/STALE");
+    expect(p.mainFrame.document.querySelector("#panel .pid")?.textContent).toBe("STALE");
+    const q = await load("http://localhost/viewer.html#/NOPE");
+    expect(q.mainFrame.document.querySelector("#panel .pid")).toBeNull();
+  });
+
+  it("writes the opened page into the hash, and clears it when closed", async () => {
+    const p = await load();
+    open(p, "MACHINE");
+    expect(p.mainFrame.window.location.hash).toBe("#/MACHINE");
+    open(p, "MACHINE");
+    expect(p.mainFrame.window.location.hash).toBe("");
+  });
+
+  it("follows a hash changed by hand", async () => {
+    const p = await load();
+    p.mainFrame.window.location.hash = "#/HUMAN";
+    await p.waitUntilComplete();
+    expect(p.mainFrame.document.querySelector("#panel .pid")?.textContent).toBe("HUMAN");
+  });
+
+  it("scrolls a body fragment link's target into view, leaving the URL and history alone", async () => {
+    const p = await load("http://localhost/viewer.html#/STALE");
+    const w = p.mainFrame.window;
+    const doc = p.mainFrame.document;
+    const scrolled: string[] = [];
+    for (const t of doc.querySelectorAll("#panel .body-md [id], #panel .body-md [name]")) {
+      t.scrollIntoView = () => void scrolled.push(t.id || t.getAttribute("name") || "");
+    }
+    expect(follow(p, "#usage")).toBe(true);
+    expect(follow(p, "#named")).toBe(true);
+    await p.waitUntilComplete();
+    expect(scrolled).toEqual(["user-content-usage", "user-content-named"]);
+    expect(w.location.hash).toBe("#/STALE");
+    expect(w.history.length).toBe(1);
+    expect(doc.querySelector("#panel .pid")?.textContent).toBe("STALE");
+  });
+
+  it("keeps the page open for a bare # or an unknown fragment, and scrolls to the top", async () => {
+    const p = await load("http://localhost/viewer.html#/STALE");
+    const doc = p.mainFrame.document;
+    const panel = doc.getElementById("panel") as HTMLElement;
+    for (const href of ["#", "#nowhere"]) {
+      panel.scrollTop = 120;
+      expect(follow(p, href)).toBe(true);
+      await p.waitUntilComplete();
+      expect(panel.scrollTop, href).toBe(0);
+      expect(doc.querySelector("#panel .pid")?.textContent, href).toBe("STALE");
+      expect(p.mainFrame.window.location.hash, href).toBe("#/STALE");
+    }
+  });
+
+  it("Back returns to a page whose fragment link was followed", async () => {
+    const p = await load();
+    const w = p.mainFrame.window;
+    open(p, "STALE");
+    follow(p, "#usage");
+    open(p, "HUMAN");
+    expect(w.history.length).toBe(3);
+    w.history.back();
+    await p.waitUntilComplete();
+    expect(p.mainFrame.document.querySelector("#panel .pid")?.textContent).toBe("STALE");
+  });
+});

@@ -22,6 +22,52 @@ const isDraft = (n) =>
   !!CONFIG.draft &&
   String(n.frontmatter[CONFIG.draft.field]) === CONFIG.draft.value;
 
+// ---- trust and staleness (§5.3, §5.5), derived when the page is viewed ----
+// OKF stores neither: the tier comes from `verified`, staleness from comparing
+// `stale_after` with now. Computing them here keeps a published page honest
+// as time passes, without rebuilding it.
+const VIEWED_AT = Date.now();
+// `YYYY-MM-DD`, optionally with a time and an offset. A value without an
+// offset (date-only included) is read as UTC, as the validator does, so every
+// viewer agrees on when a page goes stale.
+// Case-insensitive like the validator's ISO_DATETIME.
+const ISO_INSTANT =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?)?$/i;
+function instantOf(v) {
+  const m = ISO_INSTANT.exec(typeof v === "string" ? v.trim() : "");
+  if (!m) return null;
+  const [, y, mo, d, time, offset] = m;
+  // Date.parse rolls impossible dates over (2026-02-30 -> 2026-03-02): reject them.
+  const day = new Date(Date.UTC(+y, +mo - 1, +d));
+  if (day.getUTCFullYear() !== +y || day.getUTCMonth() !== +mo - 1 || day.getUTCDate() !== +d) return null;
+  // Upper-cased: Date.parse need not accept a lowercase `z` outside V8.
+  const t = Date.parse(`${y}-${mo}-${d}T${time || "00:00"}${offset ? offset.toUpperCase() : "Z"}`);
+  return Number.isNaN(t) ? null : t;
+}
+// Mirrors ACTOR in src/validate.ts (§7).
+const ACTOR = /^(?:human:\S+|process:\S+|[^\s/:]+\/\S+)$/;
+const actorOf = (e) => (typeof e.by === "string" ? e.by.trim() : "");
+// A bare `verified` mapping is a one-element list (§5.2); an entry without a
+// valid actor confirms nothing, so it does not count.
+const verifiedEntries = (v) =>
+  (Array.isArray(v) ? v : v && typeof v === "object" ? [v] : []).filter(
+    (e) => e && typeof e === "object" && !Array.isArray(e) && ACTOR.test(actorOf(e)),
+  );
+function trustTierOf(n) {
+  const entries = verifiedEntries(n.frontmatter.verified);
+  if (!entries.length) return "unverified";
+  return entries.some((e) => actorOf(e).startsWith("human:")) ? "human-reviewed" : "machine-confirmed";
+}
+// The day as written, not converted: `2026-01-01T23:00-05:00` reads 2026-01-01.
+const staleSince = (n) => {
+  const v = n.frontmatter.stale_after;
+  const t = instantOf(v);
+  return t !== null && VIEWED_AT >= t ? v.trim().slice(0, 10) : null;
+};
+// Every page would read "unverified" in a bundle that never records
+// verification, which says nothing; the tier shows once any page has one.
+const SHOW_TRUST = nodes.some((n) => verifiedEntries(n.frontmatter.verified).length > 0);
+
 // ---- colors: config palette, else stable hash-derived HSL ----
 function hashHue(s) {
   let h = 0;
@@ -274,7 +320,66 @@ function render() {
     </defs><g>${gE}</g><g>${gN}</g><g>${gL}</g>`;
   renderPanel();
   renderStats();
+  writeHash();
 }
+
+// ---- deep links: #/<id> opens that page ----
+// A `#/` prefix keeps these apart from fragment links inside a document body.
+const HASH_PREFIX = "#/";
+const hashFor = (id) =>
+  id ? HASH_PREFIX + encodeURIComponent(id).replace(/%2F/gi, "/") : "";
+function idFromHash() {
+  const h = location.hash;
+  if (!h.startsWith(HASH_PREFIX)) return undefined;
+  let id;
+  try {
+    id = decodeURIComponent(h.slice(HASH_PREFIX.length));
+  } catch {
+    return undefined;
+  }
+  return byId.has(id) ? id : undefined;
+}
+// The selection the URL was last written for; NOT_WRITTEN until the first render.
+const NOT_WRITTEN = {};
+let writtenFor = NOT_WRITTEN;
+function writeHash() {
+  const first = writtenFor === NOT_WRITTEN;
+  // Only a change of page touches the URL.
+  if (!first && selected === writtenFor) return;
+  writtenFor = selected;
+  const want = hashFor(selected);
+  const have = location.hash.startsWith(HASH_PREFIX) ? location.hash : "";
+  if (want === have) return;
+  // On load, or for the same page spelled differently (`#/a%2Fb`), correct the
+  // URL in place: a history entry there would make Back appear to do nothing.
+  const replace = first || (idFromHash() ?? null) === selected;
+  const url = want || location.pathname + location.search;
+  try {
+    // Otherwise each opened page is a history entry, so Back returns to the previous one.
+    if (replace) history.replaceState(null, "", url);
+    else history.pushState(null, "", url);
+  } catch {
+    // Some browsers refuse the history API on file:// pages; a plain hash still works.
+    // `#` rather than the bare page URL: dropping the fragment would reload the page.
+    if (replace) location.replace(want || "#");
+    else location.hash = want;
+  }
+}
+window.addEventListener("popstate", () => {
+  const id = idFromHash() ?? null;
+  if (id === selected) return;
+  selected = id;
+  render();
+  panel.scrollTop = 0;
+});
+// Browsers handle this in popstate first; happy-dom fires only hashchange.
+window.addEventListener("hashchange", () => {
+  const id = idFromHash();
+  if (id === undefined || id === selected) return;
+  selected = id;
+  render();
+  panel.scrollTop = 0;
+});
 
 svg.addEventListener("pointermove", (e) => {
   const c = e.target.closest("circle[data-id]");
@@ -1201,6 +1306,29 @@ function renderIndex() {
   panel.append(hint);
 }
 
+// The derived trust tier and staleness, as badges under the title; null when
+// there is nothing to show.
+function signalRow(n) {
+  const row = el("p", "signals");
+  const stale = staleSince(n);
+  if (stale !== null) {
+    const b = el("span", "signal stale", "stale since " + stale);
+    b.title = "stale_after has passed: check the content against its sources";
+    row.append(b);
+  }
+  if (SHOW_TRUST) {
+    const tier = trustTierOf(n);
+    const b = el("span", "signal trust-" + tier, tier);
+    b.title = {
+      "unverified": "no verified entry",
+      "machine-confirmed": "verified by a process or agent only",
+      "human-reviewed": "verified by a person",
+    }[tier];
+    row.append(b);
+  }
+  return row.childElementCount ? row : null;
+}
+
 function renderPanel() {
   panel.textContent = "";
   // The toggle sits at the top whatever the panel is showing: a publication's
@@ -1222,6 +1350,8 @@ function renderPanel() {
 
   const n = byId.get(selected);
   panel.append(el("p", "pid mono", n.id), el("p", "ptitle", titleOf(n)));
+  const signals = signalRow(n);
+  if (signals) panel.append(signals);
   if (CONFIG.sourceBaseUrl) {
     const link = sourceLink(n);
     if (link) panel.append(link);
@@ -1258,7 +1388,35 @@ function renderPanel() {
   panel.append(back);
 }
 
+// A fragment link in a body scrolls the panel and leaves the URL alone: in the
+// address bar it would replace the `#/<id>` that names the open page.
+function followFragment(a) {
+  const raw = a.getAttribute("href").slice(1);
+  let frag;
+  try {
+    frag = decodeURIComponent(raw);
+  } catch {
+    frag = raw;
+  }
+  // SANITIZE_NAMED_PROPS prefixed the body's ids and names.
+  const want = "user-content-" + frag;
+  const body = a.closest(".body-md");
+  const target =
+    frag &&
+    [...body.querySelectorAll("[id], [name]")].find(
+      (t) => t.id === want || t.getAttribute("name") === want,
+    );
+  if (target) target.scrollIntoView();
+  else panel.scrollTop = 0;
+}
+
 panel.addEventListener("click", (e) => {
+  const frag = e.target.closest(".body-md a[href^='#']");
+  if (frag && !frag.getAttribute("href").startsWith(HASH_PREFIX)) {
+    e.preventDefault();
+    followFragment(frag);
+    return;
+  }
   const go = e.target.closest("[data-go]");
   if (!go) return;
   e.preventDefault();
@@ -1586,6 +1744,7 @@ themeBtn.addEventListener("click", () => {
 });
 
 // ---- boot ----
+selected = idFromHash() ?? null;
 renderLegend();
 renderControls();
 render();

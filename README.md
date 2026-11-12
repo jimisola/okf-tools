@@ -98,7 +98,7 @@ that states the rule:
 
 A bare `verified:` mapping is treated as a one-element list (§5.2). Links may be
 relative or bundle-absolute (`/dir/doc.md`, resolved from the bundle root,
-§6.1). Offset-less timestamps are read as UTC.
+§6.1). Offset-less timestamps, bare dates included, are read as UTC.
 
 Using it as a library:
 
@@ -197,6 +197,23 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
   filename, not the word "source" — to the node's markdown file, since a
   bundle's own frontmatter often has its own `source`/`sources` provenance
   fields and this link isn't that; it's just the file being read.
+- Under the title, badges derived when the page is viewed, since OKF stores
+  neither: **stale since <date>** once `stale_after` has passed (§5.5), and
+  the trust tier from `verified` (§5.3): `unverified`, `machine-confirmed`
+  (only `process:` or agent actors) or `human-reviewed` (a `human:` actor).
+  An entry whose `by` is not a §7 actor (`human:<id>`, `process:<id>` or
+  `<producer>/<version>`) does not count. The tier is shown only when at
+  least one page in the bundle has a valid `verified` entry; otherwise every
+  page would read `unverified`, which says nothing. The badge shows the day as written in `stale_after`. A value
+  without an offset is read as UTC, as the validator does (see
+  [Errors versus warnings](#errors-versus-warnings)), and an impossible date
+  (`2026-02-30`) is ignored rather than rolled over.
+- Deep links: opening a page puts `#/<id>` in the address bar, and a URL with
+  one opens that page, so a single page can be linked to from elsewhere. Back
+  and Forward move between opened pages; loading the page adds no entry. The
+  `#/` prefix keeps these apart from fragment links inside a document body,
+  which scroll the panel to their target and leave the URL alone; an unknown
+  id opens nothing.
 - Empty detail pane (nothing selected): a two-option toggle between
   **Index** — a table of every publication currently visible — and
   **Overview**, the bundle-root `index.md` rendered as markdown, with its

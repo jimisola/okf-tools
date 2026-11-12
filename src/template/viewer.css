@@ -92,6 +92,21 @@ aside .ptitle{font-weight:600;font-size:14px;margin:2px 0 10px;text-wrap:balance
 a.src-link{display:inline-flex;align-items:center;gap:5px;margin-bottom:14px;font-size:12.5px}
 .src-icon{display:inline-flex;flex:none}
 .badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;color:#fff}
+/* Derived trust tier and staleness: outlined, so they don't read as the type badge. */
+.signals{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 12px}
+.signal{display:inline-block;padding:0 8px;border-radius:99px;font-size:11px;font-weight:600;
+  border:1px solid currentColor;line-height:18px}
+/* Colors keep 4.5:1 against the panel in both themes (11px text). */
+.signal.stale{color:#a34c08}
+.signal.trust-unverified{color:var(--ink-2);border-style:dashed}
+.signal.trust-machine-confirmed{color:var(--ink-2)}
+.signal.trust-human-reviewed{color:#267a42}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .signal.stale{color:#e8964f}
+  :root:not([data-theme="light"]) .signal.trust-human-reviewed{color:#5cc483}
+}
+:root[data-theme="dark"] .signal.stale{color:#e8964f}
+:root[data-theme="dark"] .signal.trust-human-reviewed{color:#5cc483}
 .meta{display:grid;grid-template-columns:minmax(70px,auto) 1fr;gap:3px 12px;font-size:12.5px;color:var(--ink-2);margin-bottom:14px}
 .meta .k{color:var(--ink-3)}
 .meta .v{color:var(--ink);min-width:0;overflow-wrap:anywhere}
