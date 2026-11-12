@@ -2,8 +2,9 @@
  * The block-level markdown reading shared by the link parser and the
  * validator, so both see the same code blocks, headings and list items:
  * CommonMark fenced and indented code blocks (in list items and blockquotes
- * too), code spans, and the line patterns for headings, thematic breaks and
- * list items. Masking keeps offsets and newlines: code becomes spaces.
+ * too), code spans, HTML block starts, and the line patterns for headings,
+ * thematic breaks and list items. Masking keeps offsets and newlines: code
+ * becomes spaces.
  */
 
 /** An ATX heading line (`# Title`, up to three spaces in); group 1 is its text. */
@@ -156,11 +157,46 @@ function maskIndentedBlocks(body: string): string {
  * item, heading, table row or quote, or a thematic break or setext underline.
  */
 const PARAGRAPH_END =
-  /\r?\n(?:[ \t]*\r?\n| {0,3}(?=(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)|#{1,6}(?:[ \t]|\r?$)|[|>]|(?:=+|-+)[ \t]*\r?$|(?:\*[ \t]*){3,}\r?$|(?:_[ \t]*){3,}\r?$))/m;
+  /\r?\n(?:[ \t]*\r?\n| {0,3}(?=(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)|#{1,6}(?:[ \t]|\r?$)|[|>]|(?:=+|-+)[ \t]*\r?$|(?:\*[ \t]*){3,}\r?$|(?:_[ \t]*){3,}\r?$))/gm;
+
+/** The offsets of the line ends in `text` where a paragraph ends, in order. */
+export function paragraphEnds(text: string): number[] {
+  return [...text.matchAll(PARAGRAPH_END)].map((e) => e.index);
+}
+
+const HTML_BLOCK_TAGS =
+  "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|" +
+  "fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|" +
+  "menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const HTML_ATTRIBUTE = `[ \\t]+[A-Za-z_:][\\w.:-]*(?:[ \\t]*=[ \\t]*(?:[^\\s"'=<>\`]+|'[^']*'|"[^"]*"))?`;
+const ENDS_AT_BLANK = /^[ \t]*$/;
+/** CommonMark HTML block start conditions (types 1-6) and the end condition of each. */
+const HTML_BLOCKS: [RegExp, RegExp][] = [
+  [/^ {0,3}<(?:pre|script|style|textarea)(?:[ \t>]|$)/i, /<\/(?:pre|script|style|textarea)>/i],
+  [/^ {0,3}<!--/, /-->/],
+  [/^ {0,3}<\?/, /\?>/],
+  [/^ {0,3}<![A-Za-z]/, />/],
+  [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
+  [new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?:[ \\t>]|/>|$)`, "i"), ENDS_AT_BLANK],
+];
+/** Type 7: a lone complete open or closing tag; it cannot interrupt a paragraph. */
+const HTML_BLOCK_7 = new RegExp(
+  `^ {0,3}(?:<(?!(?:pre|script|style|textarea)(?![A-Za-z0-9-]))[A-Za-z][A-Za-z0-9-]*(?:${HTML_ATTRIBUTE})*[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*$`,
+  "i",
+);
+
+/**
+ * The end condition of the HTML block `line` opens, or undefined if it opens none: the block
+ * runs to the first line, from this one on, that matches it (a blank line for types 6 and 7).
+ */
+export function htmlBlockEnd(line: string, inParagraph: boolean): RegExp | undefined {
+  for (const [start, end] of HTML_BLOCKS) if (start.test(line)) return end;
+  return !inParagraph && HTML_BLOCK_7.test(line) ? ENDS_AT_BLANK : undefined;
+}
 
 function maskCodeSpans(text: string): string {
   // Paragraph ends, found once: a code span never crosses one.
-  const ends = [...text.matchAll(new RegExp(PARAGRAPH_END.source, "gm"))].map((e) => e.index);
+  const ends = paragraphEnds(text);
   let nextEnd = 0;
   const closers = new Map<number, RegExp>();
   const unclosed = new Map<number, number>();

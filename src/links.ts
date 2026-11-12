@@ -8,33 +8,65 @@
  * consumer that parses links itself should pass the same cases.
  */
 import * as path from "node:path";
-import { ATX_HEADING, blank, maskBlockCode, maskCode, SETEXT_UNDERLINE, THEMATIC_BREAK } from "./markdown.js";
+import {
+  ATX_HEADING,
+  blank,
+  htmlBlockEnd,
+  maskBlockCode,
+  maskCode,
+  paragraphEnds,
+  SETEXT_UNDERLINE,
+  THEMATIC_BREAK,
+} from "./markdown.js";
 
 const INLINE_LINK = /\]\(\s*<?([^()\s<>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^()]*\)))?\s*\)/g;
-const REFERENCE_DEF =
-  /^ {0,3}\[(?!\^)((?:[^[\]\\]|\\.)+)\]:[ \t]*(?:\r?\n[ \t]*)?<?([^\s<>]+)>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*(?=\r?\n|$)/gm;
+// The parts of a link reference definition, read one after another (CommonMark §4.7).
+const DEFINITION_LABEL = / {0,3}\[(?!\^)((?:[^[\]\\]|\\[\s\S]){1,999})\]:/y;
+const DEFINITION_SPACE = /[ \t]*(?:(?:\r\n?|\n)[ \t]*)?/y;
+const DEFINITION_DESTINATION = /<((?:[^<>\\\r\n]|\\.)*)>|([^\s<]\S*)/y;
+const DEFINITION_TITLE = /"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|\((?:[^()\\]|\\[\s\S])*\)/y;
+const LINE_REST = /[ \t]*(?=[\r\n]|$)/y;
+const LINE = /[^\r\n]*/y;
 const REFERENCE_USE = /(?<!\\)\[((?:[^[\]\\]|\\.)+)\](?:\[((?:[^[\]\\]|\\.)*)\])?/g;
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
-
 const normalizeLabel = (label: string): string => label.trim().replace(/\s+/g, " ").toLowerCase();
 
+/** The end of `re`'s sticky match at `from` in `text`, or -1. */
+function endOf(re: RegExp, text: string, from: number): number {
+  re.lastIndex = from;
+  return re.test(text) ? re.lastIndex : -1;
+}
+
 /**
- * Whether a definition can start at `offset`, a line start in `blocks` (the body
- * with fenced and indented code blanked): at the start of the text, right after a
- * definition with a non-blank label (`afterDefinition`), or under a line that ends
- * a block: blank, an ATX heading, a thematic break or a setext underline. Under
- * anything else it is paragraph text: a definition cannot interrupt a paragraph.
+ * The definition starting at line start `at` in `text`, read no further than `limit` (where
+ * its paragraph ends): where it ends (a line end), its label's offset and its destination.
  */
-function canOpenDefinition(blocks: string, offset: number, afterDefinition: boolean): boolean {
-  if (offset === 0 || afterDefinition) return true;
-  const previous = blocks.slice(blocks.lastIndexOf("\n", offset - 2) + 1, offset - 1);
-  return (
-    /^\s*$/.test(previous) ||
-    ATX_HEADING.test(previous.replace(/\r$/, "")) ||
-    THEMATIC_BREAK.test(previous.replace(/\r$/, "")) ||
-    SETEXT_UNDERLINE.test(previous)
-  );
+function readDefinition(
+  text: string,
+  at: number,
+  limit: number,
+): { end: number; labelStart: number; labelLength: number; destination: string } | undefined {
+  DEFINITION_LABEL.lastIndex = at;
+  const label = DEFINITION_LABEL.exec(text);
+  if (label === null || DEFINITION_LABEL.lastIndex > limit) return undefined;
+  DEFINITION_DESTINATION.lastIndex = endOf(DEFINITION_SPACE, text, DEFINITION_LABEL.lastIndex);
+  const destination = DEFINITION_DESTINATION.exec(text);
+  const destinationEnd = DEFINITION_DESTINATION.lastIndex;
+  if (destination === null || destinationEnd > limit) return undefined;
+  const result = (end: number) => ({
+    end,
+    labelStart: at + label[0].indexOf("[") + 1,
+    labelLength: (label[1] as string).length,
+    destination: destination[1] ?? (destination[2] as string),
+  });
+  // A title, after a space or on the next line, must end its line; else the definition ends before it.
+  const titleStart = endOf(DEFINITION_SPACE, text, destinationEnd);
+  const titleEnd = titleStart > destinationEnd ? endOf(DEFINITION_TITLE, text, titleStart) : -1;
+  const end = titleEnd !== -1 && titleEnd <= limit ? endOf(LINE_REST, text, titleEnd) : -1;
+  if (end !== -1) return result(end);
+  const destinationLineEnd = endOf(LINE_REST, text, destinationEnd);
+  return destinationLineEnd === -1 ? undefined : result(destinationLineEnd);
 }
 
 function bundleMarkdownTarget(raw: string): string | undefined {
@@ -50,28 +82,58 @@ function bundleMarkdownTarget(raw: string): string | undefined {
 }
 
 /**
- * Each definition-shaped match in `masked` (`body` with code blanked) where
- * canOpenDefinition allows one, its label sliced from `body` so code spans in it
- * survive. Blank labels are yielded too: they resolve nothing, but markdownLinks
- * still blanks the line.
+ * Each definition in `masked` (`body` with code blanked), its label sliced from `body` so code
+ * spans in it survive. A definition opens at the start of the text, right after a definition
+ * with a non-blank label, or under a line that ends a block: blank, an ATX heading, a thematic
+ * break, a setext underline below paragraph text, or the last line of an HTML block. Under
+ * anything else it is paragraph text: a definition cannot interrupt a paragraph. Blank labels
+ * are yielded too: they resolve nothing, but markdownLinks still blanks them.
  */
 function* definitionMatches(
   body: string,
   masked: string,
 ): Generator<{ index: number; match: string; label: string; destination: string }> {
   const blocks = maskBlockCode(body);
-  // The line start after the last definition with a non-blank label: it may open another.
-  let next = -1;
-  for (const m of masked.matchAll(REFERENCE_DEF)) {
-    if (!canOpenDefinition(blocks, m.index, m.index === next)) continue;
-    const start = m.index + m[0].indexOf("[") + 1;
-    const label = body.slice(start, start + (m[1] as string).length);
-    if (normalizeLabel(label) !== "") {
-      // A match ends at a line end: `\r\n`, `\n`, a lone `\r`, or the end of the text.
-      const end = m.index + m[0].length;
-      next = end + (masked.startsWith("\r\n", end) ? 2 : 1);
+  const ends = paragraphEnds(blocks);
+  let e = 0;
+  let open = true; // whether this line may open a definition
+  let paragraph = false; // whether the line above is paragraph text
+  let html: RegExp | undefined; // the end condition of the HTML block this line is in
+  const nextLine = (end: number) => end + (blocks.startsWith("\r\n", end) ? 2 : 1);
+  for (let at = 0; at < body.length; ) {
+    const lineEnd = endOf(LINE, blocks, at);
+    const line = blocks.slice(at, lineEnd);
+    if (html !== undefined) {
+      if (html.test(line)) html = undefined;
+      open = html === undefined;
+      paragraph = false;
+      at = nextLine(lineEnd);
+      continue;
     }
-    yield { index: m.index, match: m[0], label, destination: m[2] as string };
+    while (e < ends.length && (ends[e] as number) < at) e++;
+    const definition = open ? readDefinition(masked, at, ends[e] ?? body.length) : undefined;
+    if (definition !== undefined) {
+      const { end, labelStart, labelLength, destination } = definition;
+      const label = body.slice(labelStart, labelStart + labelLength);
+      // A blank label is no definition: its lines are paragraph text.
+      open = normalizeLabel(label) !== "";
+      paragraph = !open;
+      yield { index: at, match: masked.slice(at, end), label, destination };
+      at = nextLine(end);
+      continue;
+    }
+    const empty = /^\s*$/.test(line);
+    const htmlEnd: RegExp | undefined = empty ? undefined : htmlBlockEnd(line, paragraph);
+    // An HTML block runs until a line meets its end condition, possibly this one.
+    if (htmlEnd !== undefined && !htmlEnd.test(line)) html = htmlEnd;
+    open =
+      empty ||
+      (htmlEnd !== undefined && html === undefined) ||
+      ATX_HEADING.test(line) ||
+      THEMATIC_BREAK.test(line) ||
+      (paragraph && SETEXT_UNDERLINE.test(line));
+    paragraph = !open && html === undefined;
+    at = nextLine(lineEnd);
   }
 }
 
@@ -83,7 +145,7 @@ export interface LinkDefinition {
 
 /**
  * The link reference definitions markdownLinks reads in `body`, keyed by every
- * 0-based body line each one spans (two for a destination on the next line). A
+ * 0-based body line each one spans (a destination or title may sit on a later line). A
  * line that only looks like one (in code, a footnote `[^1]: …`, or right under
  * paragraph text) is absent: it is prose.
  *

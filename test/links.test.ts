@@ -1,3 +1,4 @@
+import { marked } from "marked";
 import { describe, expect, it } from "vitest";
 import { linkDefinitions, markdownLinks, referenceLabel, resolveBundleTarget } from "../src/links.js";
 import { markdownLinkTargets } from "../src/parse.js";
@@ -232,6 +233,55 @@ describe("a definition cannot interrupt a paragraph", () => {
   });
 });
 
+// Each case follows `[a] [b] [c]` and a blank line. The expected definitions are CommonMark's;
+// marked's lexer must agree, except where a case says it deviates.
+describe("CommonMark definition forms, checked against marked", () => {
+  it.each<[string, string, Record<string, string>, boolean?]>([
+    ["=== with no paragraph above is paragraph text", "===\n[a]: A.md", {}],
+    ["=== under a definition is paragraph text", "[a]: A.md\n===\n[b]: B.md", { a: "A.md" }],
+    ["=== under paragraph text is a setext underline", "===\n===\n[a]: A.md", { a: "A.md" }],
+    ["-- with no paragraph above is paragraph text", "--\n[a]: A.md", {}],
+    ["--- under a definition is a thematic break", "[a]: A.md\n---\n[b]: B.md", { a: "A.md", b: "B.md" }],
+    ["a label over --- is a setext heading (marked deviates)", "[a]:\n---", {}, false],
+    ["a label over === is a setext heading (marked deviates)", "[a]:\n===", {}, false],
+    ['a "title" on the next line', '[a]: A.md\n  "T"\n[b]: B.md', { a: "A.md", b: "B.md" }],
+    ["a 'title' on the next line", "[a]: A.md\n  'T'\n[b]: B.md", { a: "A.md", b: "B.md" }],
+    ["a (title) on the next line", "[a]: A.md\n  (T)\n[b]: B.md", { a: "A.md", b: "B.md" }],
+    ["a next-line title not alone on its line", '[a]: A.md\n  "T" x\n[b]: B.md', { a: "A.md" }],
+    ["destination and title each on their own line", '[a]:\n  A.md\n  "T"\n[b]: B.md', { a: "A.md", b: "B.md" }],
+    ["a title spanning two lines", '[a]: A.md "T\nU"\n[b]: B.md', { a: "A.md", b: "B.md" }],
+    ["a title across a blank line (marked deviates)", '[a]: A.md "T\n\nU"\n[b]: B.md', {}, false],
+    ["a title cut by a heading (marked deviates)", '[a]: A.md "T\n# H\nU"\n[b]: B.md', {}, false],
+    ["an angle-bracket destination with a space", "[a]: A.md\n[c]: <C D.md>\n[b]: B.md", { a: "A.md", b: "B.md", c: "C D.md" }],
+    ["an angle-bracket destination with a title", '[c]: <C D.md> "t"\n[b]: B.md', { b: "B.md", c: "C D.md" }],
+    ["an angle-bracket destination across lines", "[c]: <C\nD.md>\n[b]: B.md", {}],
+    ["after an HTML comment", "<!-- c -->\n[a]: A.md", { a: "A.md" }],
+    ["after a processing instruction", "<?x?>\n[a]: A.md", { a: "A.md" }],
+    ["after a declaration", "<!X y>\n[a]: A.md", { a: "A.md" }],
+    ["after CDATA", "<![CDATA[x]]>\n[a]: A.md", { a: "A.md" }],
+    ["after a script closed on its line", "<script>x</script>\n[a]: A.md", { a: "A.md" }],
+    ["after a comment over several lines", "<!--\nx\n-->\n[a]: A.md", { a: "A.md" }],
+    ["inside a comment, across a blank line", "<!--\n\n[a]: A.md\n-->", {}],
+    ["after a comment that interrupts a paragraph", "text\n<!-- c -->\n[a]: A.md", { a: "A.md" }],
+    ["under a <div> line", "<div>\n[a]: A.md", {}],
+    ["under a closed <div> line", "<div>x</div>\n[a]: A.md", {}],
+    ["under a lone open tag", "<span>\n[a]: A.md", {}],
+    ["under a heading inside a <div> block", "<div>\n# H\n[a]: A.md", {}],
+    ["after a blank line ends a <div> block", "<div>\n\n[a]: A.md", { a: "A.md" }],
+  ])("%s", (_case, defs, expected, markedAgrees = true) => {
+    const body = `[a] [b] [c]\n\n${defs}`;
+    const first = new Map<string, string>();
+    for (const d of linkDefinitions(body).values()) {
+      if (!first.has(referenceLabel(d.label))) first.set(referenceLabel(d.label), d.destination);
+    }
+    expect(Object.fromEntries(first)).toEqual(expected);
+    expect(markdownLinkTargets(body)).toEqual(["a", "b", "c"].flatMap((l) => expected[l] ?? []));
+    const links = Object.fromEntries(Object.entries(marked.lexer(body).links).map(([k, v]) => [k, v.href]));
+    if (markedAgrees) expect(links).toEqual(expected);
+    else expect(links).not.toEqual(expected);
+  });
+});
+
 describe("markdownLinkTargets reference links", () => {
   it("ignores a definition whose label is never used", () => {
     expect(markdownLinkTargets("No links here.\n\n[unused]: DOC.001.md")).toEqual([]);
@@ -313,6 +363,19 @@ describe("linkDefinitions", () => {
     }
     const expected = labels.flatMap((l) => first.get(referenceLabel(l)) ?? []);
     expect(markdownLinks(body).map((l) => l.target)).toEqual(expected);
+  });
+
+  it("keys a definition by its title lines too", () => {
+    const body = "[a]: A.md\n  \"T\"\n[b]: B.md \"T\nU\"\n[c]:\n  <C D.md>\n  'T'";
+    expect([...linkDefinitions(body)].map(([line, d]) => [line, d.label])).toEqual([
+      [0, "a"],
+      [1, "a"],
+      [2, "b"],
+      [3, "b"],
+      [4, "c"],
+      [5, "c"],
+      [6, "c"],
+    ]);
   });
 
   it("keys a chain after a two-line definition by every line", () => {
