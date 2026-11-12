@@ -722,3 +722,87 @@ describe("--strict --allow", () => {
     expect(report.warnings).toHaveLength(2);
   });
 });
+
+describe("orphans (opt-in, advisory)", () => {
+  const note = (extra = "", body = "") =>
+    `---\ntype: note\ntitle: T\ndescription: D\n${extra}---\n\n${body}\n`;
+  const files = {
+    "index.md": "# Docs\n\n* [A](a.md) - D\n* [B](b.md) - D\n* [C](c.md) - D\n* [D](sub/d.md) - D\n",
+    "log.md": "# Log\n\n## 2026-01-01\n\n* Added [C](c.md).\n",
+    "a.md": note("", "See [B](b.md)."),
+    "b.md": note(),
+    "c.md": note("id: C\n"),
+    "sub/d.md": note("supersedes: C\n"),
+  };
+  const orphans = (r: ValidationReport) =>
+    r.warnings.filter((w) => w.code === "concept.orphan").map((w) => w.file);
+
+  it("is off by default", () => {
+    expect(orphans(validateBundle(bundle(files)))).toEqual([]);
+  });
+
+  it("warns about concepts no other concept links to; index.md and log.md links don't count", () => {
+    const report = validateBundle(bundle(files), { orphans: {} });
+    expect(orphans(report)).toEqual(["a.md", "c.md", "sub/d.md"]);
+    expect(report.warnings.find((w) => w.code === "concept.orphan")).toMatchObject({
+      section: "§6",
+      message: expect.stringMatching(/^advisory:/),
+    });
+    expect(report.conformant).toBe(true);
+  });
+
+  it("counts relation fields as links, resolved by the id field", () => {
+    const report = validateBundle(bundle(files), { orphans: { relationFields: ["supersedes"] } });
+    expect(orphans(report)).toEqual(["a.md", "sub/d.md"]);
+  });
+
+  it("tells apart files that share an id", () => {
+    const shared = note("id: X\n");
+    expect(
+      orphans(validateBundle(bundle({ "a.md": shared, "b.md": shared, "x.md": note("", "[A](a.md)") }), { orphans: {} })),
+    ).toEqual(["b.md", "x.md"]);
+    expect(
+      orphans(
+        validateBundle(bundle({ "a.md": note("id: X\n", "[B](b.md)"), "b.md": note("id: X\n", "[A](a.md)") }), {
+          orphans: {},
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("credits every file carrying a related id", () => {
+    const report = validateBundle(
+      bundle({ "a.md": note("id: X\n"), "b.md": note("id: X\n"), "r.md": note("supersedes: X\n") }),
+      { orphans: { relationFields: ["supersedes"] } },
+    );
+    expect(orphans(report)).toEqual(["r.md"]);
+  });
+
+  it("does not take a link to a file whose name is another file's id for a self-link", () => {
+    const report = validateBundle(
+      bundle({ "c.md": note(), "z.md": note("id: c\n", "[C](c.md)") }),
+      { orphans: {} },
+    );
+    expect(orphans(report)).toEqual(["z.md"]);
+  });
+
+  it("counts bundle-absolute and ../ links, but not a link to itself", () => {
+    const report = validateBundle(
+      bundle({
+        "a.md": note("", "[D](/sub/d.md) [A](a.md)"),
+        "sub/d.md": note("", "[E](../e.md)"),
+        "e.md": note(),
+      }),
+      { orphans: {} },
+    );
+    expect(orphans(report)).toEqual(["a.md"]);
+  });
+
+  it("falls back to the file name for a concept without the id field", () => {
+    const report = validateBundle(
+      bundle({ "a.md": note("supersedes: b\n"), "b.md": note("", "[A](a.md)") }),
+      { orphans: { idField: "key", relationFields: ["supersedes"] } },
+    );
+    expect(orphans(report)).toEqual([]);
+  });
+});

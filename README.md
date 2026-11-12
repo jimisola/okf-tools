@@ -26,6 +26,8 @@ Node 24 or newer is required.
 
 ```sh
 npx tsx src/validate-cli.ts <bundleDir> [--json] [--strict] [--allow <code>]...
+                            [--orphans [--id-field <name>] [--relation-field <name>]...]
+                            [--config <viewer.config.json>]
 ```
 
 ```
@@ -61,6 +63,19 @@ machine-readable report instead:
 }
 ```
 
+`--orphans` adds an advisory `concept.orphan` warning (§6) for every concept
+no other concept links to. Links from `index.md` and `log.md` don't count,
+since a listing links to everything; an orphan is reachable only by browsing
+the index or by search. Pass the same `--config` as the viewer, so typed
+relations such as `supersedes` (its `relationFields`, resolved by its
+`idField`) count as links the same way the graph draws them. `--id-field` and
+`--relation-field` override the config; any `--relation-field` replaces its
+`relationFields` list rather than adding to it. An explicit `--id-field` with
+no relation field from either source is rejected, since it would have no
+effect. The check is
+off unless asked for, because the spec has no such rule and `--strict` would
+otherwise start failing on existing bundles.
+
 ### Errors versus warnings
 
 The separation is the whole point, and it comes straight from the spec.
@@ -89,6 +104,7 @@ that states the rule:
 | §5.2 | malformed `generated` / `verified`, a missing `by`; and, as advice rather than a spec rule, content whose latest `verified[].at` predates `generated.at` |
 | §5.4 | an unknown `status` value |
 | §5.5 | an elapsed `stale_after` (stale when now ≥ `stale_after`) |
+| §6 | (with `--orphans`, advisory rather than a spec rule) a concept no other concept links to |
 | §6.1 | a broken link |
 | §7 | a `generated.by` / `verified[].by` that is not `human:<id>`, `process:<id>` or `<producer>/<version>` |
 | §8 | a missing root `index.md`, an index entry that is not `* [Title](url) - description` |

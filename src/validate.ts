@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { resolveBundleTarget } from "./links.js";
 import { ATX_HEADING, LIST_ITEM, proseLines, SETEXT_UNDERLINE, THEMATIC_BREAK } from "./markdown.js";
 import {
+  idList,
   markdownLinkTargets,
   readFrontmatter,
   walkMarkdown,
@@ -662,9 +663,18 @@ function sortFindings(findings: Finding[]): Finding[] {
   );
 }
 
+export interface OrphanOptions {
+  /** Frontmatter field holding a concept's id, as in the viewer config; defaults to "id". */
+  idField?: string;
+  /** Frontmatter fields naming related ids (e.g. "supersedes"), counted as links. */
+  relationFields?: readonly string[];
+}
+
 export interface ValidateOptions {
   /** Reference instant for staleness; defaults to now. */
   now?: Date;
+  /** Also warn about concepts no other concept links to (`concept.orphan`); off unless given. */
+  orphans?: OrphanOptions;
 }
 
 /**
@@ -688,6 +698,11 @@ export function validateBundle(
   let concepts = 0;
   let indexes = 0;
   let logs = 0;
+  // Filled only for --orphans: each concept's frontmatter, and the concept
+  // files another concept links to. Counted per file, not per id, so two files
+  // that share an id are still told apart.
+  const conceptData = new Map<string, Record<string, unknown>>();
+  const linkedFiles = new Set<string>();
 
   for (const abs of files) {
     const file = rel(abs);
@@ -707,12 +722,17 @@ export function validateBundle(
     } else {
       concepts++;
       checkConcept(ctx, file, fm);
+      if (options.orphans) conceptData.set(abs, fm.kind === "present" && isMapping(fm.data) ? fm.data : {});
     }
 
     // Broken cross-links are soft: consumers MUST tolerate them (§6.1, §11).
     for (const target of markdownLinkTargets(fm.body)) {
       const resolved = resolveBundleTarget(root, abs, target);
-      if (resolved !== undefined && known.has(resolved)) continue;
+      if (resolved !== undefined && known.has(resolved)) {
+        // conceptData holds this file only for a concept under --orphans.
+        if (conceptData.has(abs) && resolved !== abs) linkedFiles.add(resolved);
+        continue;
+      }
       warn(ctx, {
         file,
         section: "§6.1",
@@ -721,6 +741,8 @@ export function validateBundle(
       });
     }
   }
+
+  if (options.orphans) checkOrphans(ctx, options.orphans, conceptData, linkedFiles, rel);
 
   if (!known.has(path.join(root, "index.md"))) {
     warn(ctx, {
@@ -738,6 +760,48 @@ export function validateBundle(
     errors: sortFindings(ctx.errors),
     warnings: sortFindings(ctx.warnings),
   };
+}
+
+/**
+ * Warn about concepts no other concept reaches by a link or a relation field.
+ * A relation credits every file carrying the id (the id field, else the file
+ * name without `.md`), as the viewer's graph does.
+ */
+function checkOrphans(
+  ctx: Ctx,
+  options: OrphanOptions,
+  conceptData: ReadonlyMap<string, Record<string, unknown>>,
+  linked: Set<string>,
+  rel: (abs: string) => string,
+): void {
+  const idField = options.idField ?? "id";
+  const relationFields = options.relationFields ?? [];
+  if (relationFields.length > 0) {
+    const filesById = new Map<string, string[]>();
+    for (const [abs, data] of conceptData) {
+      const raw = data[idField];
+      const id = typeof raw === "string" && raw.trim() !== "" ? raw.trim() : path.basename(abs, ".md");
+      const sharing = filesById.get(id);
+      if (sharing) sharing.push(abs);
+      else filesById.set(id, [abs]);
+    }
+    for (const [abs, data] of conceptData) {
+      for (const field of relationFields) {
+        for (const id of idList(data[field])) {
+          for (const target of filesById.get(id) ?? []) if (target !== abs) linked.add(target);
+        }
+      }
+    }
+  }
+  for (const abs of conceptData.keys()) {
+    if (linked.has(abs)) continue;
+    warn(ctx, {
+      file: rel(abs),
+      section: "§6",
+      code: "concept.orphan",
+      message: "advisory: no other concept links to this one",
+    });
+  }
 }
 
 /** The warnings `--strict` fails on: all of them except the `allowed` codes. */
