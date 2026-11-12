@@ -38,7 +38,15 @@ function main(argv: string[]): number {
     return 1;
   }
 
-  const config = configPath ? loadConfig(configPath) : DEFAULT_CONFIG;
+  let config = DEFAULT_CONFIG;
+  if (configPath) {
+    try {
+      config = loadConfig(configPath);
+    } catch (e) {
+      console.error(`error: cannot load config ${configPath}: ${e instanceof Error ? e.message : String(e)}`);
+      return 2;
+    }
+  }
   const { html, bundle } = generate(bundleDir, config);
 
   mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });

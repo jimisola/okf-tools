@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,27 @@ describe("cli build", () => {
     const r = run([path.join(tmp, "nope"), path.join(tmp, "x.html")]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("bundle directory not found");
+  });
+
+  it.each([
+    ["a missing file", () => path.join(tmp, "no-such-config.json")],
+    [
+      "invalid JSON",
+      () => {
+        const p = path.join(tmp, "bad-config.json");
+        writeFileSync(p, "{ not json");
+        return p;
+      },
+    ],
+  ])("exits 2 with a one-line error for a --config with %s", (_label, configFile) => {
+    const config = configFile();
+    const out = path.join(tmp, "bad-config.html");
+    const r = run([FIXTURE, out, "--config", config]);
+    expect(r.status).toBe(2);
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stderr.startsWith(`error: cannot load config ${config}: `)).toBe(true);
+    expect(r.stderr).not.toMatch(/^\s+at /m);
+    expect(existsSync(out)).toBe(false);
   });
 });
 
