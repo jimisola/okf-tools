@@ -76,11 +76,6 @@ describe("markdownLinkTargets block boundaries", () => {
     expect(markdownLinkTargets("[a](DOC.003.md (title)) [b](DOC.004.md)")).toEqual(["DOC.003.md", "DOC.004.md"]);
   });
 
-  it("does not let a definition interrupt a paragraph, while consecutive definitions all count", () => {
-    expect(markdownLinkTargets("Text\n[r]: DOC.003.md\n\n[r]")).toEqual([]);
-    expect(markdownLinkTargets("[r] [s]\n\n# Refs\n[r]: DOC.003.md\n[s]: DOC.004.md")).toEqual(["DOC.003.md", "DOC.004.md"]);
-  });
-
   it("does not let a quoted fence line close a fence opened outside the quote", () => {
     expect(markdownLinkTargets("```md\n> ```\n[a](DOC.003.md)\n```\n\n[b](DOC.004.md)")).toEqual(["DOC.004.md"]);
   });
@@ -211,6 +206,32 @@ describe("markdownLinkTargets in indented code", () => {
   });
 });
 
+describe("a definition cannot interrupt a paragraph", () => {
+  it.each([
+    ["one under paragraph text", "[a] [b]\n\ntext\n[a]: A.md", []],
+    ["one under paragraph text, used after it", "Text\n[r]: DOC.003.md\n\n[r]", []],
+    ["one under a code-span line", "[a] [b]\n\n`code`\n[a]: A.md\n[b]: B.md", []],
+    // the first line under the text is paragraph text, so the next one is too
+    ["a chain under paragraph text", "[a] [b]\n\ntext\n[a]: A.md\n[b]: B.md", []],
+    ["a chain after a two-line one under text", "[a] [b]\n\ntext\n[a]:\n  A.md\n[b]: B.md", []],
+    // a blank label is no definition, so the line after it is paragraph text
+    ["one after a blank label", "[b]\n\n[ ]: A.md\n[b]: B.md", []],
+    ["a chain broken by a blank label", "[a] [b]\n\n[a]: A.md\n[ ]: X.md\n[b]: B.md", ["A.md"]],
+    // consecutive definitions that open a block are all definitions
+    ["a chain after a heading", "[a] [b]\n\n# H\n[a]: A.md\n[b]: B.md", ["A.md", "B.md"]],
+    ["one after a closing fence", "[a]\n\ntext\n```\nx\n```\n[a]: A.md", ["A.md"]],
+    ["after a blank line ends the paragraph", "[a]\n\ntext\n\n[a]: A.md", ["A.md"]],
+  ])("%s", (_case, body, expected) => {
+    expect(markdownLinkTargets(body)).toEqual(expected);
+    expect([...new Set([...linkDefinitions(body).values()].map((d) => d.destination))]).toEqual(expected);
+  });
+
+  // markdownLinks only: linkDefinitions keys lines by `\n`, so both share one key.
+  it("continues a chain after a lone CR", () => {
+    expect(markdownLinkTargets("[a] [b]\n\n[a]: A.md\r[b]: B.md")).toEqual(["A.md", "B.md"]);
+  });
+});
+
 describe("markdownLinkTargets reference links", () => {
   it("ignores a definition whose label is never used", () => {
     expect(markdownLinkTargets("No links here.\n\n[unused]: DOC.001.md")).toEqual([]);
@@ -294,6 +315,10 @@ describe("linkDefinitions", () => {
     expect(markdownLinks(body).map((l) => l.target)).toEqual(expected);
   });
 
+  it("keys a chain after a two-line definition by every line", () => {
+    expect([...linkDefinitions("[a]:\n  B.md\n[b]: B.md").keys()]).toEqual([0, 1, 2]);
+  });
+
   it("keys CRLF definitions by the right lines", () => {
     expect([...linkDefinitions("x\r\n\r\n[a]: A.md\r\n[b]:\r\n  B.md\r\n").keys()]).toEqual([2, 3, 4]);
   });
@@ -309,7 +334,7 @@ describe("linkDefinitions", () => {
   });
 
   it("still hides a blank-label definition's destination from markdownLinks", () => {
-    expect(markdownLinks("[a]\n\n[ ]: x](B.md)\n[a]: A.md\n").map((l) => l.target)).toEqual(["A.md"]);
+    expect(markdownLinks("[a]\n\n[ ]: x](B.md)\n\n[a]: A.md\n").map((l) => l.target)).toEqual(["A.md"]);
   });
 
   it.each([

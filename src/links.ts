@@ -8,13 +8,11 @@
  * consumer that parses links itself should pass the same cases.
  */
 import * as path from "node:path";
-import { ATX_HEADING, blank, maskCode, SETEXT_UNDERLINE, THEMATIC_BREAK } from "./markdown.js";
+import { ATX_HEADING, blank, maskBlockCode, maskCode, SETEXT_UNDERLINE, THEMATIC_BREAK } from "./markdown.js";
 
 const INLINE_LINK = /\]\(\s*<?([^()\s<>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^()]*\)))?\s*\)/g;
 const REFERENCE_DEF =
   /^ {0,3}\[(?!\^)((?:[^[\]\\]|\\.)+)\]:[ \t]*(?:\r?\n[ \t]*)?<?([^\s<>]+)>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*(?=\r?\n|$)/gm;
-/** One line that is itself a definition (title optional): consecutive definitions each start a block. */
-const REFERENCE_DEF_LINE = /^ {0,3}\[(?!\^)(?:[^[\]\\]|\\.)+\]:[ \t]*<?[^\s<>]+>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*\r?$/;
 const REFERENCE_USE = /(?<!\\)\[((?:[^[\]\\]|\\.)+)\](?:\[((?:[^[\]\\]|\\.)*)\])?/g;
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
@@ -22,29 +20,22 @@ const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const normalizeLabel = (label: string): string => label.trim().replace(/\s+/g, " ").toLowerCase();
 
 /**
- * Whether the line at `offset` starts a block, as a link definition must: it opens the
- * text, or follows a line that ends one — blank (code is already blanked), an ATX heading,
- * a thematic break or setext underline, or a definition, one-line or two-line. A
- * definition-like line right under paragraph text is part of that paragraph.
+ * Whether a definition can start at `offset`, a line start in `blocks` (the body
+ * with fenced and indented code blanked): at the start of the text, right after a
+ * definition with a non-blank label (`afterDefinition`), or under a line that ends
+ * a block: blank, an ATX heading, a thematic break or a setext underline. Under
+ * anything else it is paragraph text: a definition cannot interrupt a paragraph.
  */
-function startsBlock(text: string, offset: number): boolean {
-  if (offset === 0) return true;
-  const lines = text.slice(0, offset - 1).split("\n");
-  const previous = lines[lines.length - 1] ?? "";
-  const twoBack = lines[lines.length - 2] ?? "";
+function canOpenDefinition(blocks: string, offset: number, afterDefinition: boolean): boolean {
+  if (offset === 0 || afterDefinition) return true;
+  const previous = blocks.slice(blocks.lastIndexOf("\n", offset - 2) + 1, offset - 1);
   return (
     /^\s*$/.test(previous) ||
     ATX_HEADING.test(previous.replace(/\r$/, "")) ||
     THEMATIC_BREAK.test(previous.replace(/\r$/, "")) ||
-    SETEXT_UNDERLINE.test(previous) ||
-    REFERENCE_DEF_LINE.test(previous) ||
-    (DEFINITION_LABEL_LINE.test(twoBack) && DEFINITION_DESTINATION_LINE.test(previous))
+    SETEXT_UNDERLINE.test(previous)
   );
 }
-
-/** The two lines of a definition split after its label: `[label]:` then the destination. */
-const DEFINITION_LABEL_LINE = /^ {0,3}\[(?!\^)(?:[^[\]\\]|\\.)+\]:[ \t]*\r?$/;
-const DEFINITION_DESTINATION_LINE = /^[ \t]*<?[^\s<>]+>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*\r?$/;
 
 function bundleMarkdownTarget(raw: string): string | undefined {
   if (HAS_SCHEME.test(raw) || raw.startsWith("#") || raw.startsWith("//")) return undefined;
@@ -59,18 +50,27 @@ function bundleMarkdownTarget(raw: string): string | undefined {
 }
 
 /**
- * Each definition-shaped match in `masked` (`body` with code blanked) that starts a
- * block, its label sliced from `body` so code spans in it survive. Blank labels are
- * yielded too: they resolve nothing, but markdownLinks still blanks the line.
+ * Each definition-shaped match in `masked` (`body` with code blanked) where
+ * canOpenDefinition allows one, its label sliced from `body` so code spans in it
+ * survive. Blank labels are yielded too: they resolve nothing, but markdownLinks
+ * still blanks the line.
  */
 function* definitionMatches(
   body: string,
   masked: string,
 ): Generator<{ index: number; match: string; label: string; destination: string }> {
+  const blocks = maskBlockCode(body);
+  // The line start after the last definition with a non-blank label: it may open another.
+  let next = -1;
   for (const m of masked.matchAll(REFERENCE_DEF)) {
-    if (!startsBlock(masked, m.index)) continue;
+    if (!canOpenDefinition(blocks, m.index, m.index === next)) continue;
     const start = m.index + m[0].indexOf("[") + 1;
     const label = body.slice(start, start + (m[1] as string).length);
+    if (normalizeLabel(label) !== "") {
+      // A match ends at a line end: `\r\n`, `\n`, a lone `\r`, or the end of the text.
+      const end = m.index + m[0].length;
+      next = end + (masked.startsWith("\r\n", end) ? 2 : 1);
+    }
     yield { index: m.index, match: m[0], label, destination: m[2] as string };
   }
 }
@@ -98,12 +98,16 @@ export interface LinkDefinition {
 export function linkDefinitions(body: string): Map<number, LinkDefinition> {
   const masked = maskCode(body);
   const out = new Map<number, LinkDefinition>();
+  // The 0-based line at `counted`, carried forward so line numbers cost linear time.
+  let line = 0;
+  let counted = 0;
   for (const { index, match, label, destination } of definitionMatches(body, masked)) {
     if (normalizeLabel(label) === "") continue;
+    for (let i = masked.indexOf("\n", counted); i !== -1 && i < index; i = masked.indexOf("\n", i + 1)) line++;
+    counted = index;
     const definition = { label, destination };
-    const first = masked.slice(0, index).split("\n").length - 1;
     const lines = match.split("\n").length;
-    for (let i = first; i < first + lines; i++) out.set(i, definition);
+    for (let i = line; i < line + lines; i++) out.set(i, definition);
   }
   return out;
 }
