@@ -166,6 +166,14 @@ describe("§11.3 / §8 — index.md structure", () => {
     }
   });
 
+  it("reads code the way the link parser does: a fence opened on a list item's line", () => {
+    // The closing `  ~~~` closes that fence; it must not open a new one that
+    // swallows the section below.
+    const body = "- ~~~\n  # Fake\n  ~~~\n\n# Docs\n\n* [A](a.md) - a\n";
+    const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));
+    expect(codes(report.errors)).toEqual([]);
+  });
+
   it("accepts setext headings (=== and --- underlines) as section headings", () => {
     for (const body of ["Docs\n====\n\n* [A](a.md) - a\n", "Docs\n----\n\n* [A](a.md) - a\n"]) {
       const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));

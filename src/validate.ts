@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { resolveBundleTarget } from "./links.js";
+import { ATX_HEADING, LIST_ITEM, proseLines, SETEXT_UNDERLINE, THEMATIC_BREAK } from "./markdown.js";
 import {
   markdownLinkTargets,
   readFrontmatter,
@@ -194,29 +195,6 @@ function countLines(text: string): number {
   return text.split(/\r?\n/).length;
 }
 
-/** The body's lines outside fenced code, with their 1-based line numbers. */
-function proseLines(body: string): { text: string; line: number }[] {
-  const out: { text: string; line: number }[] = [];
-  let fence: string | undefined;
-  const lines = body.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (fence === undefined) {
-      const open = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
-      if (open) fence = open[1] as string;
-      else out.push({ text: line, line: i + 1 });
-      continue;
-    }
-    // Only a run of the same character, at least as long and with nothing
-    // after it, closes the fence; a shorter or labelled one is its content.
-    const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
-    if (close !== undefined && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
-  }
-  return out;
-}
-
-const ATX_HEADING = /^ {0,3}#{1,6}(?!#)(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/;
-const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
 /** A line that cannot be setext heading text: blank, or opening another block. */
 const NOT_PARAGRAPH = /^\s*$|^ {0,3}(?:[-*+](?:\s|$)|>|\d{1,9}[.)](?:\s|$)|#{1,6}(?:\s|$)|\|)/;
 
@@ -238,7 +216,6 @@ function headings(body: string): { text: string; line: number }[] {
   return out;
 }
 
-const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/;
 
 /**
  * Whether the lines up to `end` that form its block — back to a blank line or
@@ -276,7 +253,6 @@ function insideList(lines: { text: string; line: number }[], start: number): boo
   return false;
 }
 
-const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 
 /**
  * Whether the line at `start` sits in a list item: a list item opens above it
