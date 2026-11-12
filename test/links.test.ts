@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownLinks, resolveBundleTarget } from "../src/links.js";
+import { linkDefinitions, markdownLinks, referenceLabel, resolveBundleTarget } from "../src/links.js";
 import { markdownLinkTargets } from "../src/parse.js";
 
 describe("markdownLinkTargets", () => {
@@ -252,6 +252,84 @@ describe("markdownLinks", () => {
       ["DOC.001.md", 3],
       ["/REF/REF.001.md", 5],
     ]);
+  });
+});
+
+describe("linkDefinitions", () => {
+  it("keys each definition by every body line it spans", () => {
+    const body = "See [a] and [b].\n\n[a]: DOC.001.md\n[b]:\n  /REF/REF.001.md \"Title\"\n";
+    expect([...linkDefinitions(body)]).toEqual([
+      [2, { label: "a", destination: "DOC.001.md" }],
+      [3, { label: "b", destination: "/REF/REF.001.md" }],
+      [4, { label: "b", destination: "/REF/REF.001.md" }],
+    ]);
+  });
+
+  // The same definitions, seen two ways: use every candidate label, then the
+  // targets markdownLinks resolves must be exactly the first definition
+  // linkDefinitions lists for each label, in order of use.
+  it.each([
+    ["one-line", "[a]: A.md\n"],
+    ["two-line", "[a]:\n  A.md \"T\"\n"],
+    ["CRLF", "[a]: A.md\r\n[b]:\r\n  B.md\r\n"],
+    ["at the end, no newline", "text\n\n[a]:\n  A.md"],
+    ["after a heading", "# H\n[a]: A.md\n"],
+    ["consecutive", "[a]: A.md\n[b]: B.md\n[c]: C.md\n"],
+    ["first label wins", "[a]: A.md\n[A]: B.md\n"],
+    ["later duplicate after another label", "[a]: A.md\n[b]: B.md\n[a]: C.md\n[b]: D.md\n"],
+    ["in a fence", "```\n[a]: A.md\n```\n"],
+    ["in a blockquote", "> [a]: A.md\n"],
+    ["under paragraph text", "text\n[a]: A.md\n"],
+    ["blank label", "[ ]: A.md\n"],
+    ["footnote", "[^a]: A.md\n"],
+  ])("agrees with markdownLinks: %s", (_case, defs) => {
+    const labels = ["a", "b", "c", " "];
+    const body = `${labels.map((l) => `[${l}]`).join(" ")}\n\n${defs}`;
+    const first = new Map<string, string>();
+    for (const d of linkDefinitions(body).values()) {
+      const key = referenceLabel(d.label);
+      if (!first.has(key)) first.set(key, d.destination);
+    }
+    const expected = labels.flatMap((l) => first.get(referenceLabel(l)) ?? []);
+    expect(markdownLinks(body).map((l) => l.target)).toEqual(expected);
+  });
+
+  it("keys CRLF definitions by the right lines", () => {
+    expect([...linkDefinitions("x\r\n\r\n[a]: A.md\r\n[b]:\r\n  B.md\r\n").keys()]).toEqual([2, 3, 4]);
+  });
+
+  it("lists every definition of a label; the first is the one used", () => {
+    const body = "[a]\n\n[a]: A.md\n[A]: B.md\n";
+    expect([...linkDefinitions(body).values()].map((d) => d.destination)).toEqual(["A.md", "B.md"]);
+    expect(markdownLinks(body).map((l) => l.target)).toEqual(["A.md"]);
+  });
+
+  it("leaves out a definition with a blank label", () => {
+    expect(linkDefinitions("[ ]: A.md\n\n[ ]").size).toBe(0);
+  });
+
+  it("still hides a blank-label definition's destination from markdownLinks", () => {
+    expect(markdownLinks("[a]\n\n[ ]: x](B.md)\n[a]: A.md\n").map((l) => l.target)).toEqual(["A.md"]);
+  });
+
+  it.each([
+    ["in a fenced block", "```\n[r]: A.md\n```"],
+    ["in an indented block", "    [r]: A.md"],
+    ["as a footnote", "[^r]: a note"],
+    ["under paragraph text", "Some text\n[r]: A.md"],
+  ])("skips a definition-like line %s", (_where, body) => {
+    expect(linkDefinitions(body).size).toBe(0);
+  });
+
+  it("keeps a label's code span as written", () => {
+    expect([...linkDefinitions("[`x` y]: A.md").values()][0]?.label).toBe("`x` y");
+  });
+});
+
+describe("referenceLabel", () => {
+  it("compares labels the way markdownLinks does", () => {
+    expect(referenceLabel("  The  Error\nRule ")).toBe("the error rule");
+    expect(referenceLabel("X")).toBe(referenceLabel("x"));
   });
 });
 

@@ -58,6 +58,62 @@ function bundleMarkdownTarget(raw: string): string | undefined {
   return target.toLowerCase().endsWith(".md") ? target : undefined;
 }
 
+/**
+ * Each definition-shaped match in `masked` (`body` with code blanked) that starts a
+ * block, its label sliced from `body` so code spans in it survive. Blank labels are
+ * yielded too: they resolve nothing, but markdownLinks still blanks the line.
+ */
+function* definitionMatches(
+  body: string,
+  masked: string,
+): Generator<{ index: number; match: string; label: string; destination: string }> {
+  for (const m of masked.matchAll(REFERENCE_DEF)) {
+    if (!startsBlock(masked, m.index)) continue;
+    const start = m.index + m[0].indexOf("[") + 1;
+    const label = body.slice(start, start + (m[1] as string).length);
+    yield { index: m.index, match: m[0], label, destination: m[2] as string };
+  }
+}
+
+/** A link reference definition: `[label]: destination "title"`, the destination possibly on the next line. */
+export interface LinkDefinition {
+  label: string;
+  destination: string;
+}
+
+/**
+ * The link reference definitions markdownLinks reads in `body`, keyed by every
+ * 0-based body line each one spans (two for a destination on the next line). A
+ * line that only looks like one (in code, a footnote `[^1]: …`, or right under
+ * paragraph text) is absent: it is prose.
+ *
+ * A definition whose label is blank (`[ ]: …`) is absent too: markdownLinks
+ * never resolves it. Several definitions of one label are all listed, in body
+ * order, but only the first is used, as in markdownLinks; compare labels with
+ * referenceLabel.
+ *
+ * For tools that edit links in place, e.g. one that rewrites plain references
+ * into links and must leave definition lines and defined labels alone.
+ */
+export function linkDefinitions(body: string): Map<number, LinkDefinition> {
+  const masked = maskCode(body);
+  const out = new Map<number, LinkDefinition>();
+  for (const { index, match, label, destination } of definitionMatches(body, masked)) {
+    if (normalizeLabel(label) === "") continue;
+    const definition = { label, destination };
+    const first = masked.slice(0, index).split("\n").length - 1;
+    const lines = match.split("\n").length;
+    for (let i = first; i < first + lines; i++) out.set(i, definition);
+  }
+  return out;
+}
+
+/**
+ * The form two reference labels are compared in: trimmed, inner whitespace
+ * collapsed, lowercased. `[Foo  Bar]` uses the definition `[foo bar]: …`.
+ */
+export const referenceLabel = normalizeLabel;
+
 /** A link to a `.md` file in the bundle: its decoded target, and an offset inside the link (for a line number). */
 export interface MarkdownLink {
   target: string;
@@ -72,17 +128,17 @@ export interface MarkdownLink {
  * links.
  */
 export function markdownLinks(body: string): MarkdownLink[] {
+  const masked = maskCode(body);
   const definitions = new Map<string, string>();
-  const text = maskCode(body).replace(
-    REFERENCE_DEF,
-    (match: string, label: string, dest: string, offset: number, masked: string) => {
-      if (!startsBlock(masked, offset)) return match;
-      const start = offset + match.indexOf("[") + 1;
-      const key = normalizeLabel(body.slice(start, start + label.length));
-      if (key !== "" && !definitions.has(key)) definitions.set(key, dest);
-      return blank(match);
-    },
-  );
+  let text = "";
+  let end = 0;
+  for (const { index, match, label, destination } of definitionMatches(body, masked)) {
+    const key = normalizeLabel(label);
+    if (key !== "" && !definitions.has(key)) definitions.set(key, destination);
+    text += masked.slice(end, index) + blank(match);
+    end = index + match.length;
+  }
+  text += masked.slice(end);
 
   const found: { at: number; raw: string }[] = [];
   for (const m of text.matchAll(INLINE_LINK)) found.push({ at: m.index, raw: m[1] as string });
