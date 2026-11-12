@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { resolveBundleTarget } from "./links.js";
 import {
   markdownLinkTargets,
   readFrontmatter,
-  resolveLinkTarget,
   walkMarkdown,
   type FrontmatterResult,
 } from "./parse.js";
@@ -97,6 +97,7 @@ function isoInstant(value: unknown): { at: Date; offset: boolean } | undefined {
   const text = value.trim();
   const dt = ISO_DATETIME.exec(text);
   if (!dt && !ISO_DATE.test(text)) return undefined;
+  if (!calendarDate(text.slice(0, 10))) return undefined;
   const offset = dt?.[1] !== undefined;
   const iso = !dt ? `${text}T00:00:00Z` : `${text.replace(" ", "T")}${offset ? "" : "Z"}`;
   const ms = Date.parse(iso);
@@ -193,29 +194,109 @@ function countLines(text: string): number {
   return text.split(/\r?\n/).length;
 }
 
-/** ATX headings with their 1-based line numbers, fenced code skipped. */
-function headings(body: string): { text: string; line: number }[] {
+/** The body's lines outside fenced code, with their 1-based line numbers. */
+function proseLines(body: string): { text: string; line: number }[] {
   const out: { text: string; line: number }[] = [];
   let fence: string | undefined;
   const lines = body.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string;
-    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1] as string;
-      if (fence === undefined) fence = marker[0];
-      else if (marker[0] === fence) fence = undefined;
+    if (fence === undefined) {
+      const open = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+      if (open) fence = open[1] as string;
+      else out.push({ text: line, line: i + 1 });
       continue;
     }
-    if (fence !== undefined) continue;
-    const m = /^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/.exec(line);
-    if (m) out.push({ text: m[1] as string, line: i + 1 });
+    // Only a run of the same character, at least as long and with nothing
+    // after it, closes the fence; a shorter or labelled one is its content.
+    const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+    if (close !== undefined && close[0] === fence[0] && close.length >= fence.length) fence = undefined;
   }
   return out;
 }
 
-/** §8 entry line: `* [Title](relative-url) - description`. */
-const INDEX_ENTRY = /^\s*[-*+]\s+\[[^\]]*\]\([^)]*\)(?:\s+[-–—]\s+.*)?\s*$/;
+const ATX_HEADING = /^ {0,3}#{1,6}(?!#)(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
+/** A line that cannot be setext heading text: blank, or opening another block. */
+const NOT_PARAGRAPH = /^\s*$|^ {0,3}(?:[-*+](?:\s|$)|>|\d{1,9}[.)](?:\s|$)|#{1,6}(?:\s|$)|\|)/;
+
+/**
+ * Headings with their 1-based line numbers, fenced code skipped: ATX (`# Title`)
+ * and setext (a paragraph line underlined with `===` or `---`).
+ */
+function headings(body: string): { text: string; line: number }[] {
+  const out: { text: string; line: number }[] = [];
+  const lines = proseLines(body);
+  for (const [i, { text, line }] of lines.entries()) {
+    const atx = ATX_HEADING.exec(text);
+    const next = lines[i + 1];
+    if (atx) out.push({ text: atx[1] ?? "", line });
+    else if (next?.line === line + 1 && SETEXT_UNDERLINE.test(next.text) && isParagraph(lines, i)) {
+      out.push({ text: text.trim(), line });
+    }
+  }
+  return out;
+}
+
+const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/;
+
+/**
+ * Whether the lines up to `end` that form its block — back to a blank line or
+ * an ATX heading — are plain paragraph text: no list, quote, table or HTML
+ * line (`<`), and at most three spaces of indentation, as CommonMark allows
+ * for setext heading text. An indented block is a paragraph only when what
+ * precedes it is not a list: there it is the item's own paragraph (a loose
+ * list), and a `---` under it is a thematic break.
+ */
+function isParagraph(lines: { text: string; line: number }[], end: number): boolean {
+  for (let i = end; i >= 0; i--) {
+    const { text, line } = lines[i] as { text: string; line: number };
+    if (NOT_PARAGRAPH.test(text) || /^(?: {4}|\t)/.test(text) || /^ {0,3}</.test(text)) return false;
+    const prev = lines[i - 1];
+    if (prev === undefined || prev.line !== line - 1 || /^\s*$/.test(prev.text) || ATX_HEADING.test(prev.text)) {
+      return !/^\s/.test(text) || !insideList(lines, i);
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether the block above `start` (past blank lines, back to the next blank
+ * line) is list content: any of its lines a list item or indented. A lazily
+ * wrapped bullet ends in an unindented line, so its last line alone says nothing.
+ */
+function insideList(lines: { text: string; line: number }[], start: number): boolean {
+  let j = start - 1;
+  while (j >= 0 && /^\s*$/.test((lines[j] as { text: string }).text)) j--;
+  for (; j >= 0; j--) {
+    const { text } = lines[j] as { text: string };
+    if (/^\s*$/.test(text)) return false;
+    if (LIST_ITEM.test(text) || /^\s/.test(text)) return true;
+  }
+  return false;
+}
+
+const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+
+/**
+ * Whether the line at `start` sits in a list item: a list item opens above it
+ * with no heading (ATX or `===` setext), thematic break or blockquote in between, and every blank
+ * line crossed has list content above it (a loose list). Indented lines and
+ * lazily wrapped text between them belong to that item; indented lines alone
+ * are code.
+ */
+function inListItem(lines: { text: string; line: number }[], start: number): boolean {
+  for (let j = start - 1; j >= 0; j--) {
+    const { text } = lines[j] as { text: string };
+    if (ATX_HEADING.test(text) || THEMATIC_BREAK.test(text) || /^ {0,3}(?:>|=+[ \t]*$)/.test(text)) return false;
+    if (LIST_ITEM.test(text)) return true;
+    if (/^\s*$/.test(text) && !insideList(lines, j)) return false;
+  }
+  return false;
+}
+
+/** §8 entry line: `* [Title](relative-url) - description`; the title may hold escaped brackets (`\[JWT\]`). */
+const INDEX_ENTRY = /^\s*[-*+]\s+\[(?:[^\]\\]|\\.)*\]\([^)]*\)(?:\s+[-–—]\s+.*)?\s*$/;
 
 function checkConcept(
   ctx: Ctx,
@@ -476,17 +557,72 @@ function checkIndex(
     }
   }
 
+  // An unparseable block is already an error; a version warning on it would only repeat it.
+  if (isRoot && fm.kind !== "invalid") checkOkfVersion(ctx, file, fm);
+
   // Entry shape is soft: a line that is not `* [Title](url) - description`
-  // is reported, but never rejects the bundle.
-  for (const [i, line] of fm.body.split(/\r?\n/).entries()) {
-    if (!/^\s*[-*+]\s+/.test(line)) continue;
-    if (INDEX_ENTRY.test(line)) continue;
+  // is reported, but never rejects the bundle. A bullet in fenced code (a
+  // sample of the entry syntax, say) is neither an entry nor malformed.
+  const entryLines: number[] = [];
+  const scanned = proseLines(fm.body);
+  for (const [i, { text, line }] of scanned.entries()) {
+    if (!/^\s*[-*+]\s+/.test(text)) continue;
+    // Four or more columns in is indented code, unless it continues a list: a nested item.
+    if (!/^ {0,3}[-*+]\s/.test(text) && !inListItem(scanned, i)) continue;
+    if (INDEX_ENTRY.test(text)) {
+      entryLines.push(line);
+      continue;
+    }
     warn(ctx, {
       file,
       section: "§8",
       code: "index.entry.malformed",
       message: "list item is not `* [Title](relative-url) - description`",
-      line: lineOffset + i + 1,
+      line: lineOffset + line,
+    });
+  }
+
+  // The sections themselves are §8 structure, which §11.3 makes a
+  // conformance rule: at least one entry grouped under a heading.
+  const firstHeading = headings(fm.body)[0]?.line;
+  if (firstHeading === undefined || !entryLines.some((l) => l > firstHeading)) {
+    error(ctx, {
+      file,
+      section: "§11.3",
+      code: "index.structure.no_sections",
+      message:
+        "an index.md groups its entries in sections: a heading followed by `* [Title](relative-url) - description` entries",
+    });
+  }
+}
+
+/** The OKF version this validator checks against (§12). */
+export const OKF_VERSION = "0.2";
+
+/**
+ * §12 — the bundle-root `okf_version` declaration. Declaring it is optional,
+ * but a bundle that once declared it and lost it (an index regenerated by a
+ * tool that drops frontmatter) is worth a warning, and so is a version this
+ * validator does not check against.
+ */
+function checkOkfVersion(ctx: Ctx, file: string, fm: FrontmatterResult): void {
+  const declared = fm.kind === "present" && isMapping(fm.data) ? fm.data[ROOT_INDEX_KEY] : undefined;
+  if (declared === undefined) {
+    warn(ctx, {
+      file,
+      section: "§12",
+      code: "okf_version.missing",
+      message: `the bundle-root index.md declares no \`${ROOT_INDEX_KEY}\`; add \`${ROOT_INDEX_KEY}: "${OKF_VERSION}"\``,
+    });
+  } else if (declared !== OKF_VERSION) {
+    const unquoted = typeof declared === "number" && String(declared) === OKF_VERSION;
+    warn(ctx, {
+      file,
+      section: "§12",
+      code: "okf_version.unsupported",
+      message: unquoted
+        ? `\`${ROOT_INDEX_KEY}: ${OKF_VERSION}\` is a YAML number; quote it: \`${ROOT_INDEX_KEY}: "${OKF_VERSION}"\``
+        : `\`${ROOT_INDEX_KEY}: ${JSON.stringify(declared)}\` is not the quoted string "${OKF_VERSION}" this validator checks against`,
     });
   }
 }
@@ -599,7 +735,8 @@ export function validateBundle(
 
     // Broken cross-links are soft: consumers MUST tolerate them (§6.1, §11).
     for (const target of markdownLinkTargets(fm.body)) {
-      if (known.has(resolveLinkTarget(root, abs, target))) continue;
+      const resolved = resolveBundleTarget(root, abs, target);
+      if (resolved !== undefined && known.has(resolved)) continue;
       warn(ctx, {
         file,
         section: "§6.1",

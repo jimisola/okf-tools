@@ -107,17 +107,21 @@ describe("§11.3 / §8 — index.md structure", () => {
   it("accepts okf_version in the bundle-root index.md", () => {
     const report = validateBundle(
       bundle({
-        "index.md": '---\nokf_version: "0.2"\n---\n\n* [A](a.md) - a\n',
+        "index.md": '---\nokf_version: "0.2"\n---\n\n# Bundle\n\n* [A](a.md) - a\n',
         "a.md": CONCEPT,
       }),
     );
     expect(report.conformant).toBe(true);
     expect(report.errors).toEqual([]);
+    expect(report.warnings).toEqual([]);
   });
 
   it("rejects other keys in the bundle-root index.md", () => {
     const report = validateBundle(
-      bundle({ "index.md": '---\nokf_version: "0.2"\ntype: index\n---\n' }),
+      bundle({
+        "index.md": '---\nokf_version: "0.2"\ntype: index\n---\n\n# Bundle\n\n* [A](a.md) - a\n',
+        "a.md": CONCEPT,
+      }),
     );
     expect(report.conformant).toBe(false);
     expect(codes(report.errors)).toEqual(["index.frontmatter.extra_keys"]);
@@ -126,19 +130,198 @@ describe("§11.3 / §8 — index.md structure", () => {
 
   it("rejects frontmatter in a non-root index.md", () => {
     const report = validateBundle(
-      bundle({ "sub/index.md": '---\nokf_version: "0.2"\n---\n' }),
+      bundle({
+        "sub/index.md": '---\nokf_version: "0.2"\n---\n\n# Sub\n\n* [A](a.md) - a\n',
+        "sub/a.md": CONCEPT,
+      }),
     );
     expect(report.conformant).toBe(false);
     expect(codes(report.errors)).toEqual(["index.frontmatter.present"]);
     expect(report.errors[0]?.file).toBe("sub/index.md");
   });
 
+  it("accepts an entry whose title escapes brackets", () => {
+    const report = validateBundle(bundle({ "index.md": "# Bundle\n\n* [Tokens \\[JWT\\]](a.md) - a\n", "a.md": CONCEPT }));
+    expect(has(report.warnings, "index.entry.malformed")).toBe(false);
+  });
+
   it("warns, but does not reject, on a malformed entry line", () => {
     const report = validateBundle(
-      bundle({ "index.md": "# Bundle\n\n* a plain bullet\n" }),
+      bundle({ "index.md": "# Bundle\n\n* a plain bullet\n* [A](a.md) - a\n", "a.md": CONCEPT }),
     );
     expect(report.conformant).toBe(true);
     expect(has(report.warnings, "index.entry.malformed")).toBe(true);
+  });
+
+  it("rejects an index.md with no section of entries — prose only, or entries before any heading", () => {
+    for (const body of [
+      "This bundle holds notes about A.\n",
+      "# Bundle\n\nJust prose.\n",
+      "* [A](a.md) - a\n\n# Bundle\n",
+    ]) {
+      const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));
+      expect(report.conformant, body).toBe(false);
+      expect(codes(report.errors), body).toEqual(["index.structure.no_sections"]);
+      expect(report.errors[0]).toMatchObject({ file: "index.md", section: "§11.3" });
+    }
+  });
+
+  it("accepts setext headings (=== and --- underlines) as section headings", () => {
+    for (const body of ["Docs\n====\n\n* [A](a.md) - a\n", "Docs\n----\n\n* [A](a.md) - a\n"]) {
+      const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));
+      expect(report.errors, body).toEqual([]);
+    }
+  });
+
+  it("does not take a wrapped list item or quote above --- for a setext heading", () => {
+    const report = validateBundle(
+      bundle({
+        "log.md": "## 2026-02-01\n\n- Bumped the parser\n  to version 4.0.1\n---\n\n## 2026-01-01\n\n- created\n",
+        "index.md": "> Quoted\n> 4.0.1\n---\n\n# B\n\n* [A](a.md) - a\n",
+        "a.md": CONCEPT,
+      }),
+    );
+    expect(report.errors).toEqual([]);
+  });
+
+  it("accepts an empty ATX heading and setext text that starts with a marker character", () => {
+    for (const body of ["#\n\n* [A](a.md) - a\n", "-text\n---\n\n* [A](a.md) - a\n", "1.foo\n---\n\n* [A](a.md) - a\n"]) {
+      expect(validateBundle(bundle({ "index.md": body, "a.md": CONCEPT })).errors, body).toEqual([]);
+    }
+  });
+
+  it("does not take seven or more hashes for a heading", () => {
+    const report = validateBundle(bundle({ "index.md": "#######\n\n* [A](a.md) - a\n", "a.md": CONCEPT }));
+    expect(codes(report.errors)).toEqual(["index.structure.no_sections"]);
+  });
+
+  it("counts entries of a nested list indented four or more columns", () => {
+    for (const group of ["* Group\n    ", "1. Group\n    ", "* Group\n\t"]) {
+      const valid = validateBundle(bundle({ "index.md": `## Section\n\n${group}* [A](a.md) - a\n`, "a.md": CONCEPT }));
+      expect(valid.errors, group).toEqual([]);
+      const malformed = validateBundle(bundle({ "index.md": `## Section\n\n${group}* A, unlinked\n`, "a.md": CONCEPT }));
+      const lines = malformed.warnings.filter((w) => w.code === "index.entry.malformed").map((w) => w.line);
+      expect(lines, group).toContain(4);
+    }
+  });
+
+  it("does not count a bullet in indented code as an entry", () => {
+    for (const body of [
+      "# Bundle\n\n    * [A](a.md) - a\n",
+      "# Bundle\n\n    example\n    * [A](a.md) - a\n",
+      "# Bundle\n\n    example\n\n    * [A](a.md) - a\n",
+      "# Bundle\n\nText.\n\n    * [A](a.md) - a\n",
+      "# Bundle\n\n* Group\n\n---\n    * [A](a.md) - a\n",
+      "# Bundle\n\n* Group\n* * *\n    * [A](a.md) - a\n",
+      "# Bundle\n\n* Group\n> Quote.\n    * [A](a.md) - a\n",
+      "# Bundle\n\n* Group\n\nSection\n=======\n    * [A](a.md) - a\n",
+    ]) {
+      const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));
+      expect(codes(report.errors), body).toEqual(["index.structure.no_sections"]);
+    }
+  });
+
+  it("counts a nested entry under a lazily wrapped item, or after a blank line in a loose list", () => {
+    for (const items of ["* Group\nwrapped\n", "* Group\n\n", "* Group\nwrapped\n\n", "1. Group\n\n    Notes.\n\n"]) {
+      const body = `## Section\n\n${items}    * [A](a.md) - a\n`;
+      expect(validateBundle(bundle({ "index.md": body, "a.md": CONCEPT })).errors, body).toEqual([]);
+    }
+  });
+
+  it("treats a lazily wrapped bullet's later paragraph as list content, not setext heading text", () => {
+    const report = validateBundle(
+      bundle({
+        "log.md": "## 2026-02-01\n\n- Bumped the parser\nlazily wrapped\n\n  to version 4.0.1\n---\n\n## 2026-01-01\n\n- created\n",
+        "a.md": CONCEPT,
+      }),
+    );
+    expect(report.errors).toEqual([]);
+  });
+
+  it("accepts setext heading text indented up to three spaces, as CommonMark does", () => {
+    for (const body of ["  Docs\n  ----\n\n* [A](a.md) - a\n", "# Bundle\n\n   Docs\n   ====\n\n* [A](a.md) - a\n"]) {
+      const report = validateBundle(bundle({ "index.md": body, "a.md": CONCEPT }));
+      expect(report.errors, body).toEqual([]);
+    }
+  });
+
+  it("does not take an HTML block or a loose list item's paragraph above --- for a setext heading", () => {
+    const report = validateBundle(
+      bundle({
+        "log.md":
+          "## 2026-03-01\n\n<!-- synced 2026-02-01 -->\n---\n\n## 2026-02-01\n\n- Bumped the parser\n\n  to version 4.0.1\n---\n\n## 2026-01-01\n\n- created\n",
+        "a.md": CONCEPT,
+      }),
+    );
+    expect(report.errors).toEqual([]);
+  });
+
+  it("does not take a --- after a list or a blank line for a setext heading", () => {
+    const report = validateBundle(bundle({ "index.md": "* [A](a.md) - a\n---\n\n* [B](a.md) - b\n", "a.md": CONCEPT }));
+    expect(codes(report.errors)).toEqual(["index.structure.no_sections"]);
+  });
+
+  it("does not count entries inside fenced code, nor warn about bullets there", () => {
+    const report = validateBundle(
+      bundle({ "index.md": "# Bundle\n\nEntries look like this:\n\n```\n* [A](a.md) - a\n* not an entry\n```\n", "a.md": CONCEPT }),
+    );
+    expect(codes(report.errors)).toEqual(["index.structure.no_sections"]);
+    expect(has(report.warnings, "index.entry.malformed")).toBe(false);
+  });
+
+  it("keeps a longer fence open past a shorter or labelled inner fence", () => {
+    const sample = "````\n```text\n# Bundle\n\n* [A](a.md) - a\n```\n````\n";
+    const report = validateBundle(bundle({ "index.md": `Prose.\n\n${sample}`, "a.md": CONCEPT }));
+    expect(codes(report.errors)).toEqual(["index.structure.no_sections"]);
+  });
+
+  it("checks nested index.md files for sections too", () => {
+    const report = validateBundle(
+      bundle({ "sub/index.md": "Prose.\n", "sub/a.md": CONCEPT, "index.md": "# B\n\n* [S](sub/) - s\n" }),
+    );
+    expect(report.errors.map((e) => e.file)).toEqual(["sub/index.md"]);
+  });
+});
+
+describe("§12 — okf_version in the bundle-root index.md", () => {
+  const root = (fm: string) =>
+    validateBundle(bundle({ "index.md": `${fm}# Bundle\n\n* [A](a.md) - a\n`, "a.md": CONCEPT }));
+
+  it("warns when the declaration is missing, so a regenerated index that dropped it is noticed", () => {
+    const report = root("");
+    expect(report.conformant).toBe(true);
+    expect(codes(report.warnings)).toEqual(["okf_version.missing"]);
+  });
+
+  it("tells an unquoted 0.2 to quote it", () => {
+    const report = root("---\nokf_version: 0.2\n---\n\n");
+    const w = report.warnings.find((x) => x.code === "okf_version.unsupported");
+    expect(w?.message).toContain('quote it: `okf_version: "0.2"`');
+  });
+
+  it('warns on any value but the quoted string "0.2", including an unquoted number', () => {
+    for (const value of ["0.2", '"0.1"', '"1.0"']) {
+      const report = root(`---\nokf_version: ${value}\n---\n\n`);
+      expect(report.conformant, value).toBe(true);
+      expect(codes(report.warnings), value).toEqual(["okf_version.unsupported"]);
+    }
+  });
+
+  it("adds no version warning to an unparseable frontmatter block, which is already an error", () => {
+    const report = root("---\nokf_version: [unclosed\n---\n\n");
+    expect(codes(report.errors)).toEqual(["index.frontmatter.unparseable"]);
+    expect(report.warnings.filter((w) => w.code.startsWith("okf_version"))).toEqual([]);
+  });
+
+  it("does not ask nested index.md files for a declaration", () => {
+    const report = validateBundle(
+      bundle({
+        "index.md": '---\nokf_version: "0.2"\n---\n\n# B\n\n* [S](sub/) - s\n',
+        "sub/index.md": "# Sub\n\n* [A](a.md) - a\n",
+        "sub/a.md": CONCEPT,
+      }),
+    );
+    expect(report.warnings).toEqual([]);
   });
 
   it("reports line numbers as they appear in the file, not in the body", () => {
@@ -452,12 +635,23 @@ describe("§5.5 — staleness", () => {
     expect(report.conformant).toBe(true);
     expect(has(report.warnings, "stale_after.unparseable")).toBe(true);
   });
+
+  it("treats an impossible calendar date as unparseable, not as a normalised instant", () => {
+    for (const value of ['"2026-02-30T00:00:00Z"', '"2026-02-31"']) {
+      const report = validateBundle(
+        bundle({ "a.md": `---\ntype: note\nstale_after: ${value}\n---\n` }),
+        { now },
+      );
+      expect(has(report.warnings, "stale_after.unparseable")).toBe(true);
+      expect(has(report.warnings, "concept.stale")).toBe(false);
+    }
+  });
 });
 
 describe("report shape", () => {
   let report: ValidationReport;
   const dir = bundle({
-    "index.md": '---\nokf_version: "0.2"\n---\n\n* [A](DOC/a.md) - a\n',
+    "index.md": '---\nokf_version: "0.2"\n---\n\n# Bundle\n\n* [A](DOC/a.md) - a\n',
     "log.md": "## 2026-01-01\n\n- created\n",
     "DOC/a.md": CONCEPT,
     "DOC/b.md": "no frontmatter here\n",
@@ -508,7 +702,7 @@ describe("--strict --allow", () => {
       bundle({
         "a.md": fm('stale_after: "2026-01-01T00:00:00Z"'),
         "b.md": fm('generated: { by: "nobody", at: "2026-01-01T00:00:00Z" }'),
-        "index.md": "# Docs\n\n* [A](a.md) - D\n* [B](b.md) - D\n",
+        "index.md": '---\nokf_version: "0.2"\n---\n\n# Docs\n\n* [A](a.md) - D\n* [B](b.md) - D\n',
       }),
       { now: new Date("2026-06-01T00:00:00Z") },
     );

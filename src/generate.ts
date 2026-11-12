@@ -77,6 +77,6 @@ export function generateHtml(bundle: Bundle, config: ViewerConfig): string {
 }
 
 export function generate(bundleDir: string, config: ViewerConfig): GenerateResult {
-  const bundle = parseBundle(bundleDir, config.idField);
+  const bundle = parseBundle(bundleDir, config.idField, config.relationFields);
   return { html: generateHtml(bundle, config), bundle };
 }

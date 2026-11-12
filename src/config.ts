@@ -57,6 +57,12 @@ export interface ViewerConfig {
   name: string;
   /** Frontmatter key used as node id; falls back to the filename stem. */
   idField: string;
+  /**
+   * Frontmatter keys whose values (an id, or a list of ids) are edges too,
+   * next to body links, such as a field naming the documents one replaces. Empty (the
+   * default) draws body links only.
+   */
+  relationFields: string[];
   /** Frontmatter key used as node title. */
   titleField: string;
   /** Frontmatter key that drives node color and the legend. */
@@ -110,6 +116,7 @@ export interface ViewerConfig {
 export const DEFAULT_CONFIG: ViewerConfig = {
   name: "OKF Bundle",
   idField: "id",
+  relationFields: [],
   titleField: "title",
   typeField: "type",
   facets: [{ key: "type" }],
@@ -174,6 +181,9 @@ export function resolveConfig(partial: unknown): ViewerConfig {
   const config: ViewerConfig = {
     name: typeof p.name === "string" ? p.name : DEFAULT_CONFIG.name,
     idField: typeof p.idField === "string" ? p.idField : DEFAULT_CONFIG.idField,
+    relationFields: Array.isArray(p.relationFields)
+      ? p.relationFields.filter((f): f is string => typeof f === "string" && f !== "")
+      : [],
     titleField:
       typeof p.titleField === "string" ? p.titleField : DEFAULT_CONFIG.titleField,
     typeField:

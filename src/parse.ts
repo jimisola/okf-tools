@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { markdownLinks, resolveBundleTarget } from "./links.js";
 
 export interface BundleNode {
   /** Node id: frontmatter idField if present, otherwise the filename stem. */
@@ -38,13 +39,6 @@ export interface Bundle {
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
 /**
- * Links to `.md` files: relative (`](../X/target.md#anchor)`) or
- * bundle-absolute (`](/X/target.md)`, §6.1). URLs with a scheme and
- * protocol-relative `//` links are not concept links.
- */
-const LINK_RE = /\]\((?!(?:[a-z][a-z0-9+.-]*:|\/\/))([^)#\s]+\.md)(?:#[^)]*)?\)/g;
-
-/**
  * Every `.md` file under `dir`, recursively, in a deterministic
  * (name-sorted, depth-first) order. Absolute paths.
  */
@@ -53,11 +47,13 @@ const LINK_RE = /\]\((?!(?:[a-z][a-z0-9+.-]*:|\/\/))([^)#\s]+\.md)(?:#[^)]*)?\)/
  * (directory listing, §8) and `log.md` (update history, §9). They are not
  * concept documents. `walkMarkdown` still returns them — conformance
  * checking has to inspect them — but `parseBundle` never makes them nodes.
+ * The match is case-sensitive: the spec names only the lowercase files, so
+ * `INDEX.md` is a concept like any other.
  */
 export const RESERVED_FILENAMES: readonly string[] = ["index.md", "log.md"];
 
 export function isReservedFilename(name: string): boolean {
-  return RESERVED_FILENAMES.includes(name.toLowerCase());
+  return RESERVED_FILENAMES.includes(name);
 }
 
 export function walkMarkdown(dir: string): string[] {
@@ -99,26 +95,14 @@ export function readFrontmatter(text: string): FrontmatterResult {
   }
 }
 
-/** `.md` link targets in a markdown body, in document order. */
-export function markdownLinkTargets(body: string): string[] {
-  return [...body.matchAll(LINK_RE)].map((m) => m[1] as string);
-}
-
 /**
- * The absolute path a link target in `fromFile` points at. A leading `/` is
- * bundle-absolute (§6.1) and resolves against `root`; anything else resolves
- * against the linking file's directory.
+ * Decoded `.md` link targets in a markdown body, in document order: relative
+ * (`../X/target.md#anchor`) or bundle-absolute (`/X/target.md`, §6.1). See
+ * `markdownLinks` for what counts as a link. Resolve them with
+ * `resolveBundleTarget`, which does not decode again.
  */
-export function resolveLinkTarget(root: string, fromFile: string, target: string): string {
-  let decoded = target;
-  try {
-    decoded = decodeURIComponent(target);
-  } catch {
-    // Malformed percent-encoding: resolve the target as written.
-  }
-  return decoded.startsWith("/")
-    ? path.join(root, decoded)
-    : path.resolve(path.dirname(fromFile), decoded);
+export function markdownLinkTargets(body: string): string[] {
+  return markdownLinks(body).map((l) => l.target);
 }
 
 function splitFrontmatter(text: string): {
@@ -135,13 +119,25 @@ function splitFrontmatter(text: string): {
   return { frontmatter, body: result.body };
 }
 
+/** A frontmatter value naming ids: one string, or a list of them. */
+export function idList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim());
+}
+
 /**
  * Walk a bundle directory, parse every markdown file, and extract the
  * citation graph. Edges are the `.md` links between bodies, resolved by
- * `resolveLinkTarget` (so both `../REF/REF.001.md` and `/REF/REF.001.md`
- * work); links that resolve outside the bundle are dropped.
+ * `resolveBundleTarget` (so both `../REF/REF.001.md` and `/REF/REF.001.md`
+ * work), plus the ids named in any of `relationFields` (typed relations, such
+ * as a field naming the documents one replaces); links that resolve outside
+ * the bundle and unknown ids are dropped.
  */
-export function parseBundle(bundleDir: string, idField = "id"): Bundle {
+export function parseBundle(
+  bundleDir: string,
+  idField = "id",
+  relationFields: readonly string[] = [],
+): Bundle {
   const root = path.resolve(bundleDir);
   const files = walkMarkdown(root).filter((f) => !isReservedFilename(path.basename(f)));
 
@@ -166,24 +162,30 @@ export function parseBundle(bundleDir: string, idField = "id"): Bundle {
     nodes.push(node);
   }
 
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   const edgeSet = new Set<string>();
   const edges: [string, string][] = [];
+  const addEdge = (node: BundleNode, target: BundleNode | undefined) => {
+    if (!target || target.id === node.id) return;
+    const key = `${node.id}\u001f${target.id}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push([node.id, target.id]);
+  };
   for (const abs of files) {
     const node = byFile.get(abs) as BundleNode;
     for (const link of markdownLinkTargets(node.body)) {
-      const target = byFile.get(resolveLinkTarget(root, abs, link));
-      if (!target || target.id === node.id) continue;
-      const key = `${node.id}\u001f${target.id}`;
-      if (edgeSet.has(key)) continue;
-      edgeSet.add(key);
-      edges.push([node.id, target.id]);
+      const resolved = resolveBundleTarget(root, abs, link);
+      addEdge(node, resolved === undefined ? undefined : byFile.get(resolved));
+    }
+    for (const field of relationFields) {
+      for (const id of idList(node.frontmatter[field])) addEdge(node, byId.get(id));
     }
   }
   edges.sort((a, b) =>
     a[0] === b[0] ? (a[1] < b[1] ? -1 : 1) : a[0] < b[0] ? -1 : 1,
   );
 
-  const byId = new Map(nodes.map((n) => [n.id, n]));
   for (const [s, t] of edges) {
     const src = byId.get(s);
     const tgt = byId.get(t);

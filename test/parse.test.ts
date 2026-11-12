@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseBundle, resolveLinkTarget, walkMarkdown } from "../src/parse.js";
+import { parseBundle, walkMarkdown } from "../src/parse.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/bundle", import.meta.url));
 
@@ -85,6 +85,17 @@ describe("reserved filenames (OKF v0.2 §3.1)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("matches reserved names case-sensitively: INDEX.md and Log.md are concepts", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-reserved-case-"));
+    try {
+      writeFileSync(path.join(dir, "INDEX.md"), "---\nid: I\ntype: note\n---\n\nBody.\n");
+      writeFileSync(path.join(dir, "Log.md"), "---\nid: L\ntype: note\n---\n\nBody.\n");
+      expect(parseBundle(dir).nodes.map((n) => n.id).sort()).toEqual(["I", "L"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("bundle-root index.md (OKF v0.2 §8)", () => {
@@ -151,13 +162,49 @@ describe("bundle-absolute links (OKF v0.2 §6.1)", () => {
     }
   });
 
-  it("resolves relative targets against the linking file, and tolerates bad escapes", () => {
-    const root = path.resolve("/bundle");
-    const from = path.join(root, "lib", "DOC", "A.md");
-    const b = path.join(root, "lib", "REF", "B.md");
-    expect(resolveLinkTarget(root, from, "/lib/REF/B.md")).toBe(b);
-    expect(resolveLinkTarget(root, from, "../REF/B.md")).toBe(b);
-    expect(resolveLinkTarget(root, from, "B%20C.md")).toBe(path.join(root, "lib", "DOC", "B C.md"));
-    expect(resolveLinkTarget(root, from, "100%.md")).toBe(path.join(root, "lib", "DOC", "100%.md"));
+  it("draws edges from bundle-absolute and reference-style links, not from links in code", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-links-"));
+    try {
+      mkdirSync(path.join(dir, "DOC"));
+      mkdirSync(path.join(dir, "REF"));
+      writeFileSync(
+        path.join(dir, "DOC", "A.md"),
+        "---\nid: A\n---\n\n[b](/REF/B.md) [c][c] `[d](D.md)`\n\n```\n[d](D.md)\n```\n\n[c]: ../REF/C.md\n",
+      );
+      for (const id of ["B", "C"]) writeFileSync(path.join(dir, "REF", `${id}.md`), `---\nid: ${id}\n---\n\nBody.\n`);
+      writeFileSync(path.join(dir, "DOC", "D.md"), "---\nid: D\n---\n\nBody.\n");
+      expect(parseBundle(dir).edges).toEqual([
+        ["A", "B"],
+        ["A", "C"],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("draws an edge to a file whose link has a literal % (malformed percent-encoding)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-percent-"));
+    try {
+      writeFileSync(path.join(dir, "A.md"), "---\nid: A\n---\n\n[x](100%.md)\n");
+      writeFileSync(path.join(dir, "100%.md"), "---\nid: P\n---\n\nBody.\n");
+      expect(parseBundle(dir).edges).toEqual([["A", "P"]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("draws edges from relationFields, a single id or a list, unknown ids and self dropped", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "okf-relations-"));
+    try {
+      writeFileSync(path.join(dir, "A.md"), "---\nid: A\nreplaces: B\nseeAlso: [C, A, nope]\n---\n\nBody.\n");
+      for (const id of ["B", "C"]) writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\n---\n\nBody.\n`);
+      expect(parseBundle(dir).edges).toEqual([]);
+      expect(parseBundle(dir, "id", ["replaces", "seeAlso"]).edges).toEqual([
+        ["A", "B"],
+        ["A", "C"],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

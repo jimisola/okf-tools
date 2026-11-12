@@ -71,7 +71,9 @@ The separation is the whole point, and it comes straight from the spec.
 2. every frontmatter block has a non-empty `type`;
 3. the reserved filenames follow their structure when present — an `index.md`
    carries no frontmatter (the bundle-root one may carry `okf_version`, and
-   nothing else), and a `log.md` uses ISO 8601 `YYYY-MM-DD` date headings.
+   nothing else) and groups its entries in sections, at least one heading
+   followed by `* [Title](url) - description` entries (§8); a `log.md` uses
+   ISO 8601 `YYYY-MM-DD` date headings.
 
 **Everything else is a warning**, because §11 says consumers MUST NOT reject a
 bundle for missing optional fields, unknown `type` values, unknown extra
@@ -92,6 +94,7 @@ that states the rule:
 | §8 | a missing root `index.md`, an index entry that is not `* [Title](url) - description` |
 | §9 | out-of-order log entries, frontmatter in a `log.md` |
 | §10.2 | a `type: Attested Computation` concept with no `runtime` |
+| §12 | a bundle-root `index.md` that declares no `okf_version`, or a value other than the quoted string `"0.2"` |
 
 A bare `verified:` mapping is treated as a one-element list (§5.2). Links may be
 relative or bundle-absolute (`/dir/doc.md`, resolved from the bundle root,
@@ -133,6 +136,7 @@ Every key is optional — `{}` (or no `--config` at all) works on any bundle.
 {
   "name": "My Corpus",                // header title (default "OKF Bundle")
   "idField": "id",                    // node id; falls back to the filename stem
+  "relationFields": ["replaces"],     // frontmatter keys naming ids that are edges too
   "titleField": "title",
   "typeField": "type",                // drives node color + the legend
   "facets": [                         // facet filter groups; values are discovered

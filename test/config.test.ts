@@ -34,6 +34,14 @@ describe("resolveConfig", () => {
     expect(c.idField).toBe("id"); // untouched default
   });
 
+  it("keeps string relationFields and drops the rest", () => {
+    expect(resolveConfig({ relationFields: ["replaces", 3, "", "seeAlso"] }).relationFields).toEqual([
+      "replaces",
+      "seeAlso",
+    ]);
+    expect(resolveConfig({ relationFields: "replaces" }).relationFields).toEqual([]);
+  });
+
   it("ignores an incomplete draft rule", () => {
     expect(resolveConfig({ draft: { field: "lifecycle" } }).draft).toBeUndefined();
   });
