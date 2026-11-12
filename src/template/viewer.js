@@ -1,8 +1,8 @@
 "use strict";
 /* Runtime for the OKF bundle graph viewer. Vanilla JS, no network access.
    Frontmatter is always rendered inertly (textContent / createElement).
-   Markdown bodies are rendered as HTML via the inlined marked — the bundle
-   is trusted input (you render your own corpus). */
+   Markdown bodies are rendered as HTML via the inlined marked and then
+   sanitized with the inlined DOMPurify, so a bundle need not be trusted. */
 
 const DATA = JSON.parse(document.getElementById("viewer-data").textContent);
 const CONFIG = JSON.parse(document.getElementById("viewer-config").textContent);
@@ -498,6 +498,44 @@ function resolveBodyLink(fromFile, href) {
   return byFile.get(parts.join("/")) || null;
 }
 
+// ---- sanitizer: bundle markdown is untrusted ----
+// DOMPurify drops scripts, event handlers and other active content; the hook
+// keeps link and image targets only when they are http(s), relative or `#`,
+// drops remote images unless the config allows them, and keeps no form
+// control but a disabled task-list checkbox.
+const PURIFY = typeof DOMPurify !== "undefined" && DOMPurify.isSupported ? DOMPurify : null;
+const SANITIZE = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: ["style", "form"],
+  FORBID_ATTR: ["style"],
+  // Body ids and names become `user-content-…`, so they cannot shadow the page's own.
+  SANITIZE_NAMED_PROPS: true,
+};
+const REMOTE_IMAGES = CONFIG.remoteImages === true;
+function safeUrl(value) {
+  try {
+    const u = new URL(value, "https://relative.invalid/");
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+if (PURIFY) {
+  PURIFY.addHook("afterSanitizeAttributes", (node) => {
+    for (const name of ["href", "xlink:href", "src"]) {
+      if (node.hasAttribute(name) && !safeUrl(node.getAttribute(name))) node.removeAttribute(name);
+    }
+    // Remote images are beacons; they load only when the config allows them.
+    if (node.tagName === "IMG" && !REMOTE_IMAGES && /^[a-z][a-z0-9+.-]*:|^\/\//i.test(node.getAttribute("src") || "")) {
+      node.removeAttribute("src");
+    }
+    // The only control a body keeps is a GFM task-list checkbox: disabled.
+    if (node.tagName === "INPUT" && !(node.getAttribute("type") === "checkbox" && node.hasAttribute("disabled"))) {
+      node.remove();
+    }
+  });
+}
+
 /**
  * A markdown body rendered to HTML, with its relative `.md` links rewired to
  * in-pane navigation. `fromFile` is the bundle-relative path the links are
@@ -505,8 +543,13 @@ function resolveBodyLink(fromFile, href) {
  */
 function renderMarkdownBody(fromFile, markdown) {
   const body = el("div", "body-md");
-  // Trusted input: the bundle is your own corpus (see README).
-  body.innerHTML = marked.parse(markdown);
+  if (PURIFY) body.innerHTML = PURIFY.sanitize(marked.parse(markdown), SANITIZE);
+  else {
+    // Fail closed: without the sanitizer, show the markdown as text.
+    const pre = el("pre");
+    pre.textContent = markdown;
+    body.appendChild(pre);
+  }
   for (const a of body.querySelectorAll("a[href]")) {
     const target = resolveBodyLink(fromFile, a.getAttribute("href"));
     if (target) a.dataset.go = target.id;

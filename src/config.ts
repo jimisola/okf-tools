@@ -111,6 +111,12 @@ export interface ViewerConfig {
    * markdown source (e.g. a GitHub `blob/main/` URL for the bundle root).
    */
   sourceBaseUrl?: string;
+  /**
+   * Whether a body's images may load from `https:` URLs. Off by default: an
+   * image is a beacon, so an untrusted bundle could learn who opened which
+   * page, and when. Turn it on for bundles you trust.
+   */
+  remoteImages?: boolean;
 }
 
 export const DEFAULT_CONFIG: ViewerConfig = {
@@ -220,6 +226,7 @@ export function resolveConfig(partial: unknown): ViewerConfig {
   }
   if (typeof p.backLink === "string") config.backLink = p.backLink;
   if (typeof p.sourceBaseUrl === "string") config.sourceBaseUrl = p.sourceBaseUrl;
+  if (p.remoteImages === true) config.remoteImages = true;
   return config;
 }
 

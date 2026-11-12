@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
@@ -27,6 +28,40 @@ function markedSource(): string {
   return readFileSync(path.join(pkgDir, "lib", "marked.umd.js"), "utf8");
 }
 
+function domPurifySource(): string {
+  // dompurify's exports map hides package.json; its main entry sits in dist/.
+  const distDir = path.dirname(require.resolve("dompurify"));
+  return readFileSync(path.join(distDir, "purify.min.js"), "utf8");
+}
+
+/** The executable inline scripts: plain `<script>` elements, not the JSON ones. */
+const INLINE_SCRIPT = /<script>([\s\S]*?)<\/script>/g;
+
+/**
+ * The page's Content-Security-Policy. Scripts run only when their text hashes
+ * to one of the page's own inline scripts, so markup that slips into a rendered
+ * body cannot run script. Images load only from the page's own origin, and
+ * from https: URLs too when the config's `remoteImages` is on.
+ * Styles stay inline (the stylesheet and the graph's style attributes).
+ */
+export function contentSecurityPolicy(
+  inlineScripts: string[],
+  { remoteImages = false }: { remoteImages?: boolean } = {},
+): string {
+  const hashes = inlineScripts.map(
+    (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`,
+  );
+  return [
+    "default-src 'none'",
+    `script-src ${hashes.join(" ")}`,
+    "style-src 'unsafe-inline'",
+    remoteImages ? "img-src 'self' https:" : "img-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "object-src 'none'",
+  ].join("; ");
+}
+
 export interface GenerateResult {
   html: string;
   bundle: Bundle;
@@ -34,8 +69,9 @@ export interface GenerateResult {
 
 /**
  * Generate one self-contained HTML page for a parsed bundle: template +
- * CSS + runtime JS + bundle JSON + config JSON + marked, all inlined.
- * The page loads nothing from any network.
+ * CSS + runtime JS + bundle JSON + config JSON + marked + DOMPurify, all
+ * inlined, under a Content-Security-Policy that allows only those scripts.
+ * The page loads no script or style from any network.
  */
 export function generateHtml(bundle: Bundle, config: ViewerConfig): string {
   const data = {
@@ -61,19 +97,27 @@ export function generateHtml(bundle: Bundle, config: ViewerConfig): string {
   const escapeHtml = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  return html
+  const page = html
     .split("__TITLE__")
     .join(escapeHtml(config.name))
     .split("/*__CSS__*/")
     .join(css)
     .split("/*__MARKED__*/")
     .join(embedJs(markedSource()))
+    .split("/*__DOMPURIFY__*/")
+    .join(embedJs(domPurifySource()))
     .split("__DATA__")
     .join(embedJson(data))
     .split("__CONFIG__")
     .join(embedJson(config))
     .split("/*__RUNTIME__*/")
     .join(embedJs(runtime));
+
+  // Last, once every script is final. The placeholder sits in <head>, before
+  // any bundle data, so the first occurrence is always the template's own.
+  const scripts = [...page.matchAll(INLINE_SCRIPT)].map((m) => m[1] as string);
+  const csp = contentSecurityPolicy(scripts, { remoteImages: config.remoteImages === true });
+  return page.replace("__CSP__", () => csp);
 }
 
 export function generate(bundleDir: string, config: ViewerConfig): GenerateResult {

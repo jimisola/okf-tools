@@ -15,6 +15,7 @@ import {
 import { afterAll, describe, expect, it } from "vitest";
 import { resolveConfig } from "../src/config.js";
 import { generate } from "../src/generate.js";
+import { withoutSanitizer } from "./helpers.js";
 
 // Execute the generated page's inline scripts in a DOM and poke the UI.
 const FIXTURE = fileURLToPath(new URL("./fixtures/bundle", import.meta.url));
@@ -39,7 +40,7 @@ const browser = new Browser({
 async function loadPage() {
   const { html } = generate(FIXTURE, config);
   const page = browser.newPage();
-  page.content = html;
+  page.content = withoutSanitizer(html);
   await page.waitUntilComplete();
   return page;
 }
@@ -174,7 +175,7 @@ describe("multi-select facets", () => {
   async function loadMany() {
     const { html } = generate(MANY, manyConfig);
     const page = browser.newPage();
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -293,7 +294,7 @@ describe("details-panel empty state: Overview vs Index", () => {
     const page = browser.newPage();
     if (stored !== undefined)
       page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", stored);
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -408,7 +409,7 @@ describe("details-panel empty state: Overview vs Index", () => {
       const { html } = generate(FIXTURE, config);
       const page = browser.newPage();
       if (stored) page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", stored);
-      page.content = html;
+      page.content = withoutSanitizer(html);
       await page.waitUntilComplete();
       const doc = page.mainFrame.document;
       const panel = doc.getElementById("panel") as HTMLElement;
@@ -430,7 +431,7 @@ describe("the Index: the page filter state, sortable", () => {
     const page = browser.newPage();
     if (storedSort !== undefined)
       page.mainFrame.window.localStorage.setItem("okf-viewer-index-sort", storedSort);
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -650,7 +651,7 @@ describe("the Overview folds into sections", () => {
         "okf-viewer-overview-open",
         JSON.stringify(open),
       );
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -749,7 +750,7 @@ describe("the Overview folds into sections", () => {
     const page = browser.newPage();
     page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", "overview");
     const { html } = generate(FLAT, resolveConfig({ name: "Flat" }));
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     const panel = panelOf(page);
     expect(panel.querySelector("details.sect")).toBeFalsy();
@@ -798,7 +799,7 @@ describe("the Overview groups on frontmatter when groupings are configured", () 
     page.mainFrame.window.localStorage.setItem("okf-viewer-empty-view", "overview");
     if (stored !== undefined)
       page.mainFrame.window.localStorage.setItem("okf-viewer-overview-group", stored);
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -888,7 +889,7 @@ describe("the Index shows configured frontmatter columns", () => {
       }),
     );
     const page = browser.newPage();
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     return page;
   }
@@ -935,7 +936,7 @@ describe("the Index shows configured frontmatter columns", () => {
       resolveConfig({ name: "Fixture Corpus", indexColumns: ["domain"] }),
     );
     const page = browser.newPage();
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     const panel = panelOf(page);
     expect(
@@ -989,7 +990,7 @@ describe("the Index shows configured frontmatter columns", () => {
   it("with none configured the Index is ID, Title, Citations", async () => {
     const { html } = generate(FIXTURE, config);
     const page = browser.newPage();
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     expect(
       [...panelOf(page).querySelectorAll("table.rank th")].map((th) =>
@@ -1017,7 +1018,7 @@ describe("bundle-absolute body links (OKF §6.1)", () => {
   it("counts the edge and navigates the link in-pane", async () => {
     const { html } = generate(ABS, resolveConfig({ name: "Absolute" }));
     const page = browser.newPage();
-    page.content = html;
+    page.content = withoutSanitizer(html);
     await page.waitUntilComplete();
     const doc = page.mainFrame.document;
     expect(doc.getElementById("stats")?.textContent).toContain("1 citations");

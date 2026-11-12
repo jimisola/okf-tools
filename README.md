@@ -159,10 +159,12 @@ Every key is optional — `{}` (or no `--config` at all) works on any bundle.
                                       // empty/absent = id, title, plus every string
                                       // or string-array frontmatter value
   "backLink": "../",                  // optional header back-link
-  "sourceBaseUrl": "https://github.com/org/repo/blob/main/my-bundle/"
+  "sourceBaseUrl": "https://github.com/org/repo/blob/main/my-bundle/",
                                       // optional: detail pane gets a link,
                                       // labeled with the filename, to
                                       // sourceBaseUrl + node.file
+  "remoteImages": false               // let body images load from https: URLs
+                                      // (off by default: see the security note)
 }
 ```
 
@@ -266,14 +268,31 @@ compact `key: value` lines. Nothing about the schema is hardcoded.
 
 _Coming soon._
 
-### Security note — trusted input
+### Security note — untrusted bundles
 
 The markdown **bodies** in the bundle are rendered as HTML (via
-[marked](https://github.com/markedjs/marked), inlined into the page at build
-time). This tool is for rendering **your own corpus**: bundle markdown is
-trusted input, and no sanitizer is applied to it. Frontmatter, by contrast,
-is always rendered inertly (`textContent`/`createElement`), never as HTML.
-Do not point the generator at markdown you would not serve as HTML yourself.
+[marked](https://github.com/markedjs/marked)) and then sanitized with
+[DOMPurify](https://github.com/cure53/DOMPurify), both inlined into the page at
+build time. Scripts, event handlers, `<iframe>`/`<object>`/`<form>`/`<style>`
+elements and `style` attributes are removed, and link and image targets are
+kept only when they are `http(s)`, relative or a `#` fragment. The only form
+control kept is a disabled checkbox (a GFM task list), and a body's `id` and
+`name` attributes are prefixed with `user-content-` so they cannot shadow the
+page's own. If DOMPurify is
+missing, a body is shown as plain text rather than as unsanitized HTML.
+Frontmatter is always rendered inertly (`textContent`/`createElement`), never
+as HTML.
+
+The page also carries a `Content-Security-Policy` that allows only its own
+inline scripts (by SHA-256 hash), so a bundle cannot make the page run script
+even if markup slips through. No script, style or frame is loaded from any
+network.
+
+**Remote images are off by default.** An image in a body that loads from
+another server is a beacon: whoever runs that server learns who opened the
+page, and when. Body images therefore load only from the page's own origin.
+Set `"remoteImages": true` in the config to let them load from `https:` URLs,
+for bundles you trust.
 
 ## Development
 
