@@ -694,6 +694,28 @@ describe("report shape", () => {
   });
 });
 
+describe("control characters in the text report", () => {
+  const target = "x\x1b[31my\u009bz\u202eq\u2066.md";
+  const report = validateBundle(bundle({ "a.md": `${CONCEPT}\n[bad](${target})\n` }));
+
+  it("prints a link target's control and bidi characters escaped", () => {
+    const text = formatReport(report);
+    expect(text).toContain(
+      "link target does not resolve inside the bundle: x\\x1b[31my\\x9bz\\u202eq\\u2066.md",
+    );
+    expect(
+      text.split("\n").every((line) => !/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(line)),
+    ).toBe(true);
+  });
+
+  it("keeps the raw value in the report and its --json form", () => {
+    const broken = report.warnings.find((w) => w.code === "link.broken");
+    expect(broken?.message).toContain(target);
+    expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+    expect(JSON.stringify(report)).not.toMatch(/[\x00-\x1f]/);
+  });
+});
+
 describe("the repository's own fixture bundle", () => {
   it("is conformant", () => {
     const report = validateBundle(FIXTURE);

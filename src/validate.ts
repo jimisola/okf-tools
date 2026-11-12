@@ -835,5 +835,16 @@ export function formatReport(report: ValidationReport): string {
       ? `CONFORMANT with OKF v0.2 (${report.warnings.length} warning${report.warnings.length === 1 ? "" : "s"})`
       : `NOT CONFORMANT with OKF v0.2 (${report.errors.length} error${report.errors.length === 1 ? "" : "s"}, ${report.warnings.length} warning${report.warnings.length === 1 ? "" : "s"})`,
   );
-  return lines.join("\n");
+  // Paths, targets and other bundle-authored values must not reach the
+  // terminal as escape sequences or reorder what is shown (bidi overrides),
+  // so each line shows those characters as \xHH or \uHHHH.
+  return lines.map(escapeControls).join("\n");
 }
+
+const escapeControls = (line: string): string =>
+  line.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, (c) => {
+    const code = c.charCodeAt(0);
+    return code > 0xff
+      ? `\\u${code.toString(16).padStart(4, "0")}`
+      : `\\x${code.toString(16).padStart(2, "0")}`;
+  });
