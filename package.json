@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=24"
+    "node": "v26.13.1"
   },
   "scripts": {
     "viewer": "tsx src/cli.ts",
