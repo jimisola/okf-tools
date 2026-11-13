@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Stockholm",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "{{datasource}}",
+  "rangeStrategy": "pin",
+  "dependencyDashboard": false,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 5,
+
+  // GitHub auto-merge does the merging, so the `main` ruleset decides: a PR lands
+  // only once every required check is green and renovate-approve has approved it.
+  // A new CI job must be added to the ruleset's required checks in the same PR.
+  "automergeType": "pr",
+  "platformAutomerge": true,
+
+  // Stated explicitly: the alerts path is skipped when the key is absent.
+  "vulnerabilityAlerts": { "enabled": true },
+  "osvVulnerabilityAlerts": true,
+
+  // With every declared dependency pinned, lockfile maintenance is the only way
+  // transitive dependencies move. It automerges with CI as the only gate, and
+  // minimumReleaseAge cannot apply to it.
+  "lockFileMaintenance": { "enabled": true },
+
+  "packageRules": [
+    { "matchUpdateTypes": ["major"], "addLabels": ["renovate-version-major"], "minimumReleaseAge": "7 days" },
+    { "matchUpdateTypes": ["minor"], "addLabels": ["renovate-version-minor"], "minimumReleaseAge": "3 days", "automerge": true },
+    { "matchUpdateTypes": ["patch"], "addLabels": ["renovate-version-patch"], "minimumReleaseAge": "3 days", "automerge": true },
+    { "matchUpdateTypes": ["pin"], "addLabels": ["renovate-version-pin"], "automerge": true },
+    { "matchUpdateTypes": ["digest"], "addLabels": ["renovate-version-digest"] },
+    { "matchUpdateTypes": ["lockFileMaintenance"], "addLabels": ["renovate-version-lockfile"], "automerge": true },
+    { "matchManagers": ["github-actions"], "semanticCommitScope": "github-actions" }
+  ]
+}
