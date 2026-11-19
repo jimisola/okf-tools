@@ -10,6 +10,10 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 5,
 
+  // Add to a PR to stop Renovate updating it; the other asks for a fresh branch.
+  "stopUpdatingLabel": "bot-renovate-stop",
+  "rebaseLabel": "bot-renovate-rebase",
+
   // GitHub auto-merge does the merging, so the `main` ruleset decides: a PR lands
   // only once every required check is green and renovate-approve has approved it.
   // A new CI job must be added to the ruleset's required checks in the same PR.
@@ -17,7 +21,7 @@
   "platformAutomerge": true,
 
   // Stated explicitly: the alerts path is skipped when the key is absent.
-  "vulnerabilityAlerts": { "enabled": true },
+  "vulnerabilityAlerts": { "enabled": true, "addLabels": ["security"] },
   "osvVulnerabilityAlerts": true,
 
   // With every declared dependency pinned, lockfile maintenance is the only way
