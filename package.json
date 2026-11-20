@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "dompurify": "3.4.18",
-    "marked": "18.2.0",
+    "marked": "18.2.1",
     "yaml": "2.9.1"
   },
   "devDependencies": {
