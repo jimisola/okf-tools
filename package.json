@@ -38,7 +38,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "dompurify": "3.4.18",
+    "dompurify": "3.5.0",
     "marked": "18.2.1",
     "yaml": "2.9.1"
   },
